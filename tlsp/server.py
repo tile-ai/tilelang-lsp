@@ -264,7 +264,7 @@ class ShapeEvaluator(ast.NodeVisitor):
                 )
                 if not is_scalar_op:
                     if not self._check_broadcast(left.shape, right.shape):
-                        msg = f"Buffer shape mismatch {self._format_shape(left.shape)} vs {self._format_shape(right.shape)}"
+                        msg = f"WARNING: shape mismatch {self._format_shape(left.shape)} vs {self._format_shape(right.shape)}"
                         self._add_hint(node, f": {msg}")
                 # Return left as result info (simplified)
                 return left

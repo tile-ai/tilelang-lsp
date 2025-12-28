@@ -1,6 +1,6 @@
 import unittest
 import ast
-from server import ShapeEvaluator, ALLOC_FUNCS
+from tlsp.server import ShapeEvaluator, ALLOC_FUNCS
 
 
 class TestShapeEvaluator(unittest.TestCase):
