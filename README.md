@@ -78,7 +78,7 @@ npm run compile
 and in VS Code, open src/extension.ts and press F5 to enter the debug mode.
 
 A successful installed extension will lead to the following screen display in VS Code
-![功能演示](assets/screenshot.png)
+![example](tilelang_lsp_extension/assets/screenshot.png)
 
 For more information, please check the README.md file in the folder /tilelang_lsp_extension
 
