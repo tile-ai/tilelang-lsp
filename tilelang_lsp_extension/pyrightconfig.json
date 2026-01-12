@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/pyright/main/packages/pyright-internal/src/pyright-config.schema.json",
+  "stubPath": "./typings",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false,
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__"
+  ]
+}
