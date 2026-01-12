@@ -35,7 +35,7 @@ If you are a developer and you wish to debug the extension, you can run
 cd tilelang_lsp_extension
 npm run compile
 ```
-and in VSCode, open src/extension.ts and press F5 to enter the debug mode.
+and in VS Code, open src/extension.ts and press F5 to enter the debug mode.
 
 ## Working mechanism
 
