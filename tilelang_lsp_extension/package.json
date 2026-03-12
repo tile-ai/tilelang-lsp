@@ -1,24 +1,60 @@
 {
   "name": "tilelang-type-decorator",
   "displayName": "TileLang Type Decorator",
+  "description": "Language support for TileLang: inlay hints for buffer shapes, dtypes, and scopes.",
   "icon": "assets/icon.png",
   "publisher": "tileAI-tilelangLSP-project",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.75.0"
   },
   "categories": [
-    "Other"
+    "Programming Languages",
+    "Linters"
   ],
   "activationEvents": [
     "onLanguage:python"
   ],
   "main": "./out/extension.js",
-  "contributes": {},
+  "contributes": {
+    "configuration": {
+      "title": "TileLang LSP",
+      "properties": {
+        "tilelang.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Path to the Python interpreter that has the tlsp package installed."
+        },
+        "tilelang.enableInlayHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inlay hints for TileLang buffer allocations."
+        },
+        "tilelang.serverArgs": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "Additional arguments to pass to the TileLang LSP server."
+        }
+      }
+    },
+    "grammars": [
+      {
+        "path": "./syntaxes/tilelang-injection.tmLanguage.json",
+        "scopeName": "tilelang-injection.python",
+        "injectTo": ["source.python"],
+        "embeddedLanguages": {}
+      }
+    ]
+  },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

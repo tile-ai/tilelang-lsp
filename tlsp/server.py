@@ -116,18 +116,108 @@ class ShapeEvaluator(ast.NodeVisitor):
         self.variables = old_vars
 
     def visit_Assign(self, node: ast.Assign):
+        evaluated = None
+        eval_ok = False
         try:
-            value = self._evaluate(node.value)
+            evaluated = self._evaluate(node.value)
+            eval_ok = True
             for target in node.targets:
                 if isinstance(target, ast.Name):
-                    self.variables[target.id] = value
-                elif isinstance(target, ast.Tuple) and isinstance(value, tuple):
-                    if len(target.elts) == len(value):
-                        for var, val in zip(target.elts, value):
+                    self.variables[target.id] = evaluated
+                elif isinstance(target, ast.Tuple) and isinstance(evaluated, tuple):
+                    if len(target.elts) == len(evaluated):
+                        for var, val in zip(target.elts, evaluated):
                             if isinstance(var, ast.Name):
                                 self.variables[var.id] = val
         except Exception:
             pass
+
+        # Add type hints for non-TileLang variables
+        if self._is_tilelang_call(node.value):
+            # TileLang alloc calls already get hints from visit_Call
+            self.generic_visit(node)
+            return
+
+        # If the RHS resolves to a BufferInfo, show buffer properties
+        if eval_ok and isinstance(evaluated, BufferInfo):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.hints.append(
+                        InlayHint(
+                            position=Position(
+                                line=target.end_lineno - 1,
+                                character=target.end_col_offset,
+                            ),
+                            label=f": {evaluated}",
+                            kind=InlayHintKind.Type,
+                            padding_left=True,
+                        )
+                    )
+            self.generic_visit(node)
+            return
+
+        type_label = self._infer_type_label(node.value)
+        if type_label:
+            resolved = evaluated if eval_ok else None
+
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    label = self._format_var_hint(
+                        type_label, resolved, node.value, target.id
+                    )
+                    self.hints.append(
+                        InlayHint(
+                            position=Position(
+                                line=target.end_lineno - 1,
+                                character=target.end_col_offset,
+                            ),
+                            label=label,
+                            kind=InlayHintKind.Type,
+                            padding_left=True,
+                        )
+                    )
+                elif isinstance(target, ast.Tuple):
+                    elem_types = self._infer_tuple_unpack_types(node.value)
+                    elem_values = self._resolve_tuple_values(node.value)
+                    for i, elt in enumerate(target.elts):
+                        if not isinstance(elt, ast.Name):
+                            continue
+                        et = elem_types[i] if i < len(elem_types) else None
+                        ev = elem_values[i] if i < len(elem_values) else None
+                        if et:
+                            label = self._format_var_hint(et, ev, None, elt.id)
+                            self.hints.append(
+                                InlayHint(
+                                    position=Position(
+                                        line=elt.end_lineno - 1,
+                                        character=elt.end_col_offset,
+                                    ),
+                                    label=label,
+                                    kind=InlayHintKind.Type,
+                                    padding_left=True,
+                                )
+                            )
+
+        self.generic_visit(node)
+
+    def visit_Expr(self, node: ast.Expr):
+        """Handle bare expression statements like a standalone `Q_shared` line."""
+        inner = node.value
+        # Single variable reference
+        if isinstance(inner, ast.Name):
+            val = self.variables.get(inner.id)
+            if isinstance(val, BufferInfo):
+                self.hints.append(
+                    InlayHint(
+                        position=Position(
+                            line=inner.end_lineno - 1,
+                            character=inner.end_col_offset,
+                        ),
+                        label=f": {val}",
+                        kind=InlayHintKind.Type,
+                        padding_left=True,
+                    )
+                )
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call):
@@ -239,10 +329,6 @@ class ShapeEvaluator(ast.NodeVisitor):
 
         if isinstance(node, ast.Constant):
             return node.value
-        elif isinstance(node, ast.Num):
-            return node.n
-        elif isinstance(node, ast.Str):
-            return node.s
         elif isinstance(node, ast.Tuple):
             return tuple(self._evaluate(elt) for elt in node.elts)
         elif isinstance(node, ast.List):
@@ -403,6 +489,281 @@ class ShapeEvaluator(ast.NodeVisitor):
     def _format_shape(self, shape: Any) -> str:
         return str(shape).replace("'", "")
 
+    def _format_var_hint(
+        self,
+        type_label: str,
+        resolved: Any,
+        value_node: Optional[ast.AST],
+        var_name: str,
+    ) -> str:
+        """Build a hint string like ': int = 30' or ': str' depending on context."""
+        if resolved is None or isinstance(resolved, BufferInfo):
+            return f": {type_label}"
+
+        resolved_str = self._format_resolved(resolved)
+
+        # Don't show value if it's the same as what's literally written in source
+        # e.g. `x = 30` — the "30" is already visible
+        if value_node and self._is_plain_literal(value_node):
+            return f": {type_label}"
+
+        # Don't show value if it equals the variable name (unresolved reference)
+        if isinstance(resolved, str) and resolved == var_name:
+            return f": {type_label}"
+
+        # Truncate long values
+        if len(resolved_str) > 40:
+            resolved_str = resolved_str[:37] + "..."
+
+        return f": {type_label} = {resolved_str}"
+
+    def _format_resolved(self, value: Any) -> str:
+        """Format a resolved value for display."""
+        if isinstance(value, str):
+            # Could be a variable reference like "T.float16" or actual string
+            return repr(value) if not value.startswith(("T.", "torch.")) else value
+        if isinstance(value, (int, float, bool)):
+            return repr(value)
+        if isinstance(value, (list, tuple)):
+            inner = ", ".join(self._format_resolved(v) for v in value)
+            if isinstance(value, tuple):
+                return f"({inner},)" if len(value) == 1 else f"({inner})"
+            return f"[{inner}]"
+        return str(value)
+
+    def _type_of_value(self, val: Any) -> Optional[str]:
+        """Return a type label for a resolved Python value."""
+        if isinstance(val, BufferInfo):
+            return None  # handled by TileLang hints
+        if isinstance(val, bool):
+            return "bool"
+        if isinstance(val, int):
+            return "int"
+        if isinstance(val, float):
+            return "float"
+        if isinstance(val, str):
+            return "str"
+        if isinstance(val, list):
+            return "list"
+        if isinstance(val, tuple):
+            return "tuple"
+        if isinstance(val, dict):
+            return "dict"
+        if isinstance(val, set):
+            return "set"
+        if val is None:
+            return "None"
+        return None
+
+    def _is_plain_literal(self, node: ast.AST) -> bool:
+        """Check if a node is a simple literal that the user can already see."""
+        if isinstance(node, ast.Constant):
+            return True
+        # Negative numbers: -1 is UnaryOp(USub, Constant)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            return isinstance(node.operand, ast.Constant)
+        return False
+
+    def _resolve_tuple_values(self, node: ast.AST) -> List[Any]:
+        """Resolve individual values from a tuple expression."""
+        if isinstance(node, ast.Tuple):
+            result = []
+            for elt in node.elts:
+                try:
+                    result.append(self._evaluate(elt))
+                except Exception:
+                    result.append(None)
+            return result
+        return []
+
+    def _is_tilelang_call(self, node: ast.AST) -> bool:
+        """Check if a node is a TileLang alloc/Tensor call."""
+        if not isinstance(node, ast.Call):
+            return False
+        func_name = self._get_func_name(node.func)
+        if not func_name:
+            return False
+        base_name = func_name.split(".")[-1]
+        return base_name in ALLOC_FUNCS
+
+    def _infer_type_label(self, node: ast.AST) -> Optional[str]:
+        """Infer a human-readable type label for a value expression."""
+        # Variable references: look up resolved value type
+        if isinstance(node, ast.Name):
+            val = self.variables.get(node.id)
+            if val is not None:
+                return self._type_of_value(val)
+            return None
+
+        # Attribute access: e.g. torch.float16, self.x
+        if isinstance(node, ast.Attribute):
+            try:
+                val = self._evaluate(node)
+                if val is not None:
+                    return self._type_of_value(val)
+            except Exception:
+                pass
+            return None
+
+        # Literals
+        if isinstance(node, ast.Constant):
+            v = node.value
+            if v is None:
+                return "None"
+            if isinstance(v, bool):
+                return "bool"
+            if isinstance(v, int):
+                return "int"
+            if isinstance(v, float):
+                return "float"
+            if isinstance(v, str):
+                return "str"
+            if isinstance(v, bytes):
+                return "bytes"
+            if isinstance(v, complex):
+                return "complex"
+            return None
+
+        # f-strings
+        if isinstance(node, ast.JoinedStr):
+            return "str"
+
+        # Unary ops: -1 -> int, not x -> bool
+        if isinstance(node, ast.UnaryOp):
+            if isinstance(node.op, ast.Not):
+                return "bool"
+            inner = self._infer_type_label(node.operand)
+            return inner
+
+        # Boolean ops: x and y, x or y
+        if isinstance(node, ast.BoolOp):
+            return "bool"
+
+        # Comparisons: x < y, x == y, x in y
+        if isinstance(node, ast.Compare):
+            return "bool"
+
+        # Collection literals
+        if isinstance(node, ast.List):
+            elem_type = self._infer_collection_elem_type(node.elts)
+            return f"list[{elem_type}]" if elem_type else "list"
+
+        if isinstance(node, ast.Tuple):
+            elem_types = [self._infer_type_label(e) or "?" for e in node.elts]
+            return f"tuple[{', '.join(elem_types)}]"
+
+        if isinstance(node, ast.Set):
+            elem_type = self._infer_collection_elem_type(node.elts)
+            return f"set[{elem_type}]" if elem_type else "set"
+
+        if isinstance(node, ast.Dict):
+            key_type = self._infer_collection_elem_type(
+                [k for k in node.keys if k is not None]
+            )
+            val_type = self._infer_collection_elem_type(node.values)
+            if key_type and val_type:
+                return f"dict[{key_type}, {val_type}]"
+            return "dict"
+
+        # Comprehensions
+        if isinstance(node, ast.ListComp):
+            elem_type = self._infer_type_label(node.elt)
+            return f"list[{elem_type}]" if elem_type else "list"
+        if isinstance(node, ast.SetComp):
+            elem_type = self._infer_type_label(node.elt)
+            return f"set[{elem_type}]" if elem_type else "set"
+        if isinstance(node, ast.DictComp):
+            kt = self._infer_type_label(node.key)
+            vt = self._infer_type_label(node.value)
+            if kt and vt:
+                return f"dict[{kt}, {vt}]"
+            return "dict"
+        if isinstance(node, ast.GeneratorExp):
+            return "Generator"
+
+        # Binary ops between numeric literals
+        if isinstance(node, ast.BinOp):
+            lt = self._infer_type_label(node.left)
+            rt = self._infer_type_label(node.right)
+            if lt and rt:
+                if "float" in (lt, rt) or "complex" in (lt, rt):
+                    return "float" if "complex" not in (lt, rt) else "complex"
+                if lt == rt == "int":
+                    if isinstance(node.op, ast.Div):
+                        return "float"
+                    return "int"
+                if lt == rt == "str" and isinstance(node.op, ast.Mod):
+                    return "str"
+            return None
+
+        # Function calls with known return types
+        if isinstance(node, ast.Call):
+            func_name = self._get_func_name(node.func)
+            if func_name:
+                builtin_types = {
+                    "int": "int", "float": "float", "str": "str",
+                    "bool": "bool", "list": "list", "dict": "dict",
+                    "set": "set", "tuple": "tuple", "bytes": "bytes",
+                    "bytearray": "bytearray", "complex": "complex",
+                    "frozenset": "frozenset", "range": "range",
+                    "len": "int", "abs": "int", "round": "int",
+                    "min": "int", "max": "int", "sum": "int",
+                    "sorted": "list", "reversed": "iterator",
+                    "enumerate": "enumerate", "zip": "zip",
+                    "map": "map", "filter": "filter",
+                    "repr": "str", "chr": "str", "ord": "int",
+                    "hex": "str", "oct": "str", "bin": "str",
+                    "isinstance": "bool", "issubclass": "bool",
+                    "hasattr": "bool", "callable": "bool",
+                    "type": "type", "id": "int", "hash": "int",
+                    "input": "str", "open": "TextIO",
+                }
+                base = func_name.split(".")[-1]
+                if base in builtin_types:
+                    return builtin_types[base]
+            return None
+
+        # Await expression
+        if isinstance(node, ast.Await):
+            return None
+
+        # Starred expression
+        if isinstance(node, ast.Starred):
+            return None
+
+        # IfExp: x if cond else y
+        if isinstance(node, ast.IfExp):
+            bt = self._infer_type_label(node.body)
+            ot = self._infer_type_label(node.orelse)
+            if bt and ot and bt == ot:
+                return bt
+            if bt and ot:
+                return f"{bt} | {ot}"
+            return bt or ot
+
+        return None
+
+    def _infer_collection_elem_type(self, elts: List[ast.AST]) -> Optional[str]:
+        """If all elements in a collection share a type, return it."""
+        if not elts:
+            return None
+        types = set()
+        for e in elts:
+            t = self._infer_type_label(e)
+            if t is None:
+                return None
+            types.add(t)
+        if len(types) == 1:
+            return types.pop()
+        return " | ".join(sorted(types))
+
+    def _infer_tuple_unpack_types(self, node: ast.AST) -> List[Optional[str]]:
+        """Infer types for each element of a tuple unpacking."""
+        if isinstance(node, ast.Tuple):
+            return [self._infer_type_label(e) for e in node.elts]
+        # For function calls that return tuples, we can't easily infer
+        return []
+
     def _evaluate_subscript(self, node: ast.Subscript) -> Any:
         try:
             value_info = self._evaluate(node.value)
@@ -478,14 +839,47 @@ class ShapeEvaluator(ast.NodeVisitor):
 @server.feature(TEXT_DOCUMENT_INLAY_HINT)
 def inlay_hints(params: InlayHintParams) -> Optional[List[InlayHint]]:
     document = server.workspace.get_text_document(params.text_document.uri)
+    source = document.source
+
+    # Try parsing the full document first
+    tree = None
     try:
-        tree = ast.parse(document.source)
+        tree = ast.parse(source)
+    except SyntaxError:
+        # Fallback: try to parse valid portions by removing bad lines
+        tree = _parse_with_fallback(source)
+
+    if tree is None:
+        return []
+
+    try:
         evaluator = ShapeEvaluator()
         evaluator.visit(tree)
         return evaluator.hints
     except Exception as e:
-        logger.error(f"Error parsing document: {e}")
-        return None
+        logger.error(f"Error evaluating hints: {e}")
+        return []
+
+
+def _parse_with_fallback(source: str) -> Optional[ast.Module]:
+    """Try to parse as much of the source as possible by commenting out bad lines."""
+    lines = source.splitlines(keepends=True)
+    max_attempts = 20
+    for _ in range(max_attempts):
+        try:
+            return ast.parse("".join(lines))
+        except SyntaxError as e:
+            if e.lineno is None:
+                return None
+            # Replace the offending line with a comment
+            idx = e.lineno - 1
+            if 0 <= idx < len(lines):
+                # Preserve the newline
+                nl = "\n" if lines[idx].endswith("\n") else ""
+                lines[idx] = f"# [syntax error]{nl}"
+            else:
+                return None
+    return None
 
 
 if __name__ == "__main__":

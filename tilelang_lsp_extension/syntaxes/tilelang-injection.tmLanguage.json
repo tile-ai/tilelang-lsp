@@ -1,0 +1,62 @@
+{
+  "scopeName": "tilelang-injection.python",
+  "injectionSelector": "L:source.python",
+  "patterns": [
+    { "include": "#tilelang-alloc-calls" },
+    { "include": "#tilelang-tensor-annotation" },
+    { "include": "#tilelang-kernel" },
+    { "include": "#tilelang-parallel" },
+    { "include": "#tilelang-copy" },
+    { "include": "#tilelang-decorators" }
+  ],
+  "repository": {
+    "tilelang-alloc-calls": {
+      "comment": "Highlight T.alloc_* function calls",
+      "match": "\\b(T|tilelang\\.language)\\s*\\.\\s*(alloc_fragment|alloc_shared|alloc_local|alloc_var|alloc_barrier|alloc_tmem|alloc_reducer|alloc_descriptor|alloc_wgmma_desc|alloc_tcgen05_smem_desc|alloc_tcgen05_instruction_desc|alloc_tcgen05_instr_desc)\\b",
+      "captures": {
+        "1": { "name": "entity.name.namespace.tilelang" },
+        "2": { "name": "entity.name.function.alloc.tilelang" }
+      }
+    },
+    "tilelang-tensor-annotation": {
+      "comment": "Highlight T.Tensor, T.buffer, T.tensor type annotations",
+      "match": "\\b(T|tilelang\\.language)\\s*\\.\\s*(Tensor|buffer|tensor|Buffer)\\b",
+      "captures": {
+        "1": { "name": "entity.name.namespace.tilelang" },
+        "2": { "name": "entity.name.type.tilelang" }
+      }
+    },
+    "tilelang-kernel": {
+      "comment": "Highlight T.Kernel",
+      "match": "\\b(T|tilelang\\.language)\\s*\\.\\s*(Kernel|ceildiv)\\b",
+      "captures": {
+        "1": { "name": "entity.name.namespace.tilelang" },
+        "2": { "name": "entity.name.function.kernel.tilelang" }
+      }
+    },
+    "tilelang-parallel": {
+      "comment": "Highlight T.Parallel, T.Pipelined, T.Serial",
+      "match": "\\b(T|tilelang\\.language)\\s*\\.\\s*(Parallel|Pipelined|Serial|Reduce)\\b",
+      "captures": {
+        "1": { "name": "entity.name.namespace.tilelang" },
+        "2": { "name": "keyword.control.loop.tilelang" }
+      }
+    },
+    "tilelang-copy": {
+      "comment": "Highlight T.copy",
+      "match": "\\b(T|tilelang\\.language)\\s*\\.\\s*(copy|fill|reduce|gemm|clear|atomic_add)\\b",
+      "captures": {
+        "1": { "name": "entity.name.namespace.tilelang" },
+        "2": { "name": "support.function.builtin.tilelang" }
+      }
+    },
+    "tilelang-decorators": {
+      "comment": "Highlight @T.prim_func and @T.macro decorators",
+      "match": "@\\s*(T|tilelang\\.language)\\s*\\.\\s*(prim_func|macro)\\b",
+      "captures": {
+        "1": { "name": "entity.name.namespace.tilelang" },
+        "2": { "name": "entity.name.function.decorator.tilelang" }
+      }
+    }
+  }
+}
