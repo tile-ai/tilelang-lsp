@@ -35,6 +35,12 @@
           "default": [],
           "items": { "type": "string" },
           "description": "Additional arguments to pass to the TileLang LSP server."
+        },
+        "tilelang.target": {
+          "type": "string",
+          "default": "cuda",
+          "enum": ["cuda", "c", "llvm", "metal", "webgpu"],
+          "description": "Compilation target used when analyzing kernels (LayoutInference runs up to this target). Use 'c' on machines without a GPU toolchain."
         }
       }
     },
