@@ -18,9 +18,10 @@ fault tolerance" this analyzer is built for.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import os
+import sys
 import time
+import types
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import protocol
@@ -77,11 +78,22 @@ def span_supported() -> bool:
 
 
 def load_user_module(path: str):
-    spec = importlib.util.spec_from_file_location("_tlsp_user_kernel", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot import a Python module from {path!r}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    """Exec the user file in a fresh module namespace.
+
+    Deliberately bypasses the import loader: its timestamp-based .pyc cache
+    only compares second-level mtime and file size, so a quick same-length
+    save would silently analyze stale bytecode.
+    """
+    with open(path, encoding="utf-8") as f:
+        source = f.read()
+    module = types.ModuleType("_tlsp_user_kernel")
+    module.__file__ = path
+    # dataclasses/typing look the defining module up in sys.modules.
+    sys.modules["_tlsp_user_kernel"] = module
+    try:
+        exec(compile(source, path, "exec"), module.__dict__)
+    finally:
+        sys.modules.pop("_tlsp_user_kernel", None)
     return module
 
 
@@ -250,6 +262,12 @@ def analyze(
             warnings=warnings + (extra_warnings or []),
         )
 
+    if cfg.kernel is None:
+        # Nothing to elaborate; static hints only, no error (file may simply
+        # contain no @tilelang.jit kernel — checked before importing tilelang
+        # so plain Python files never see a "tilelang missing" diagnostic).
+        return finish(protocol.MODE_STATIC, static.hints, [])
+
     tl = _tilelang()
     if tl is None:
         diag = protocol.make_diagnostic(
@@ -258,11 +276,6 @@ def analyze(
             f"Python interpreter that hosts the tlsp server — point "
             f"`tilelang.pythonPath` at an environment with tilelang installed.")
         return finish(protocol.MODE_STATIC, static.hints, [diag])
-
-    if cfg.kernel is None:
-        # Nothing to elaborate; static hints only, no error (file may simply
-        # contain no @tilelang.jit kernel).
-        return finish(protocol.MODE_STATIC, static.hints, [])
 
     # -- elaborate: load module + get_tir ------------------------------------
     from .prologue import build_target, prologue_stages
@@ -337,7 +350,15 @@ def analyze(
     from tilelang import tvm
 
     mod = tvm.IRModule({func.attrs["global_symbol"]: func})
-    stages, stage_warnings = prologue_stages(target)
+    try:
+        stages, stage_warnings = prologue_stages(target)
+    except Exception as exc:
+        # Even pass-list construction can fail on a mismatched build:
+        # degrade to span-level hints instead of an internal error.
+        hints = (SpanCollector(abs_path, index=scoped_index).collect(func, fresh_func=func)
+                 if use_spans else hints_from_records(records))
+        diag = protocol.make_diagnostic(1, f"cannot build prologue passes: {exc}")
+        return finish(protocol.MODE_PARTIAL, hints, [diag])
     last_good, layout_done, failure = _run_prologue(mod, target, stages)
 
     # -- collect ---------------------------------------------------------------

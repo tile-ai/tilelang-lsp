@@ -74,40 +74,44 @@ def prologue_stages(target) -> Tuple[List[Tuple[str, Any]], List[str]]:
     kind = str(getattr(getattr(target, "kind", None), "name", "") or "")
 
     add("BindTarget", lambda: tirx.transform.BindTarget(target))
-    add("MaterializeKernelLaunch", T.MaterializeKernelLaunch)
+    # c/llvm lower kernel launches to serial loops (tilelang/cpu/pipeline.py);
+    # the SIMT targets keep the default thread binding.
+    add("MaterializeKernelLaunch",
+        lambda: T.MaterializeKernelLaunch(
+            lower_thread_binding=kind not in ("c", "llvm")))
     try:
         if helpers["force_let_inline"]():
-            add("LetInline", T.LetInline)
+            add("LetInline", lambda: T.LetInline())
     except Exception:
         pass
-    add("AddWrapperForSingleBufStore", T.AddWrapperForSingleBufStore)
-    add("LegalizeNegativeIndex", T.LegalizeNegativeIndex)
+    add("AddWrapperForSingleBufStore", lambda: T.AddWrapperForSingleBufStore())
+    add("LegalizeNegativeIndex", lambda: T.LegalizeNegativeIndex())
     try:
         if helpers["enable_race_check"]():
-            add("VerifyParallelLoop", T.VerifyParallelLoop)
+            add("VerifyParallelLoop", lambda: T.VerifyParallelLoop())
     except Exception:
         pass
-    add("InjectAssumes", T.InjectAssumes)
-    add("Simplify", T.Simplify)
-    add("LayoutReducer", T.LayoutReducer)
+    add("InjectAssumes", lambda: T.InjectAssumes())
+    add("Simplify", lambda: T.Simplify())
+    add("LayoutReducer", lambda: T.LayoutReducer())
 
     if kind == "cuda":
         try:
             if helpers["allow_warp_specialized"](target=target):
                 add("ProducerConsumerWarpSpecialized",
-                    tilelang.cuda.transform.ProducerConsumerWarpSpecialized)
+                    lambda: tilelang.cuda.transform.ProducerConsumerWarpSpecialized())
         except Exception:
             pass
-        add("LowerBlackwell2SM", tilelang.cuda.transform.LowerBlackwell2SM)
-        add("IfStmtBinding", T.IfStmtBinding)
-        add("PipelinePlanning", T.PipelinePlanning)
-        add("InjectSoftwarePipeline", T.InjectSoftwarePipeline)
-        add("Simplify#2", T.Simplify)
+        add("LowerBlackwell2SM", lambda: tilelang.cuda.transform.LowerBlackwell2SM())
+        add("IfStmtBinding", lambda: T.IfStmtBinding())
+        add("PipelinePlanning", lambda: T.PipelinePlanning())
+        add("InjectSoftwarePipeline", lambda: T.InjectSoftwarePipeline())
+        add("Simplify#2", lambda: T.Simplify())
     elif kind in ("metal", "webgpu"):
-        add("IfStmtBinding", T.IfStmtBinding)
-        add("PipelinePlanning", T.PipelinePlanning)
-        add("InjectSoftwarePipeline", T.InjectSoftwarePipeline)
-        add("Simplify#2", T.Simplify)
+        add("IfStmtBinding", lambda: T.IfStmtBinding())
+        add("PipelinePlanning", lambda: T.PipelinePlanning())
+        add("InjectSoftwarePipeline", lambda: T.InjectSoftwarePipeline())
+        add("Simplify#2", lambda: T.Simplify())
         if kind == "metal":
             try:
                 from tilelang.metal.pipeline import MetalFragmentToSimdgroup
@@ -117,8 +121,8 @@ def prologue_stages(target) -> Tuple[List[Tuple[str, Any]], List[str]]:
             except Exception as exc:
                 warnings.append(f"pass MetalFragmentToSimdgroup unavailable: {exc}")
     else:  # c / llvm / others: the CPU prologue shape
-        add("IfStmtBinding", T.IfStmtBinding)
-        add("Simplify#2", T.Simplify)
+        add("IfStmtBinding", lambda: T.IfStmtBinding())
+        add("Simplify#2", lambda: T.Simplify())
 
-    add("LayoutInference", T.LayoutInference)
+    add("LayoutInference", lambda: T.LayoutInference())
     return stages, warnings

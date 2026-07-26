@@ -2,7 +2,6 @@ import io
 import json
 import os
 import tempfile
-import time
 import unittest
 
 from tlsp import protocol
@@ -80,16 +79,30 @@ class TestAnalyzerClient(unittest.TestCase):
 
     def test_crash_restart(self):
         self.assertTrue(self.client.start())
-        # Kill the worker; the next request must restart it once and answer.
-        self.client._proc.kill()
-        time.sleep(0.2)
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write("x = 1\n")
             path = f.name
         self.addCleanup(os.unlink, path)
+        # Kill the worker; the next request must restart it and answer. No
+        # settling sleep: the old reader's EOF must never leak into the new
+        # generation's queue — repeat to shake the race window.
+        for _ in range(5):
+            self.client._proc.kill()
+            result = self.client.analyze(path)
+            self.assertIsNotNone(result)
+            self.assertTrue(self.client.alive)
+
+    def test_plain_python_file_no_diagnostic(self):
+        # A file without any tilelang kernel must stay quiet even when
+        # tilelang is not importable in this environment.
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write("def add(a, b):\n    return a + b\n")
+            path = f.name
+        self.addCleanup(os.unlink, path)
         result = self.client.analyze(path)
         self.assertIsNotNone(result)
-        self.assertTrue(self.client.alive)
+        self.assertEqual(result["meta"]["mode"], protocol.MODE_STATIC)
+        self.assertEqual(result["diagnostics"], [])
 
 
 class TestResultCache(unittest.TestCase):
@@ -110,6 +123,24 @@ class TestResultCache(unittest.TestCase):
                 # fresh instance still hits via disk
                 cache2 = ResultCache()
                 self.assertIsNotNone(cache2.get("/p/a.py", "content-1", "c", tl_version="0"))
+            finally:
+                os.environ.pop("TLSP_CACHE_DIR", None)
+
+    def test_key_includes_tilelang_version(self):
+        # A versioned entry must not be hit before the analyzer hello
+        # (version unknown) — otherwise stale cross-version results leak.
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["TLSP_CACHE_DIR"] = tmp
+            try:
+                cache = ResultCache()
+                result = protocol.make_result(mode=protocol.MODE_STATIC)
+                cache.put("/p/a.py", "content", "c", result, tl_version="1.0")
+                self.assertIsNotNone(
+                    cache.get("/p/a.py", "content", "c", tl_version="1.0"))
+                self.assertIsNone(
+                    cache.get("/p/a.py", "content", "c", tl_version=None))
+                self.assertIsNone(
+                    cache.get("/p/a.py", "content", "c", tl_version="2.0"))
             finally:
                 os.environ.pop("TLSP_CACHE_DIR", None)
 

@@ -2,8 +2,8 @@
 
 Analysis work is split by trigger:
 
-- typing (didChange): pure-AST static analysis, in-process, milliseconds —
-  hints/diagnostics refresh on every keystroke;
+- typing (didChange): pure-AST static analysis, in-process, milliseconds,
+  debounced 500ms (latest-wins) — hints/diagnostics refresh as you pause;
 - open/save (didOpen/didSave): full analysis dispatched to the persistent
   `tlsp.analyzer` subprocess (tilelang lives there), results cached by
   content hash both in memory and on disk under ~/.cache/tilelang_lsp.
@@ -64,16 +64,23 @@ _SEVERITY = {
 }
 
 
+def _utf16_len(text: str) -> int:
+    """Length in UTF-16 code units (the LSP position encoding)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
 def _to_lsp_diagnostics(result: dict, lines: list) -> list:
     out = []
     for d in result.get("diagnostics", []):
         line = max(d["line"] - 1, 0)
-        text = lines[line] if line < len(lines) else ""
-        start_col = len(text) - len(text.lstrip())
+        # pygls' document.lines keeps the trailing newline: strip it, then
+        # measure in UTF-16 code units — plain len is wrong on both counts.
+        text = lines[line].rstrip("\r\n") if line < len(lines) else ""
+        start_col = _utf16_len(text) - _utf16_len(text.lstrip())
         out.append(Diagnostic(
             range=Range(
                 start=Position(line=line, character=start_col),
-                end=Position(line=line, character=max(len(text), start_col + 1)),
+                end=Position(line=line, character=max(_utf16_len(text), start_col + 1)),
             ),
             message=d["message"],
             severity=_SEVERITY.get(d.get("severity"), DiagnosticSeverity.Error),
@@ -82,14 +89,18 @@ def _to_lsp_diagnostics(result: dict, lines: list) -> list:
     return out
 
 
-def _to_lsp_hints(result: dict, lines: list) -> list:
+def _to_lsp_hints(result: dict, lines: list,
+                  visible: Optional[tuple] = None) -> list:
     out = []
     for h in result.get("hints", []):
         line = h["line"] - 1
         if not (0 <= line < len(lines)):
             continue
+        if visible is not None and not (visible[0] <= line <= visible[1]):
+            continue
         out.append(InlayHint(
-            position=Position(line=line, character=len(lines[line])),
+            position=Position(
+                line=line, character=_utf16_len(lines[line].rstrip("\r\n"))),
             label=h["label"],
             kind=InlayHintKind.Type,
             padding_left=True,
@@ -111,6 +122,7 @@ class TileLangLanguageServer:
         self.results: Dict[str, dict] = {}  # uri -> latest protocol result
         self._bg_thread: Optional[threading.Thread] = None
         self._bg_queue: "queue.Queue" = queue.Queue()
+        self._debounce_timers: Dict[str, threading.Timer] = {}
         self._register_features()
 
     # -- background full analysis ---------------------------------------------
@@ -135,7 +147,9 @@ class TileLangLanguageServer:
         document = self.server.workspace.get_text_document(uri)
         if document is None:
             return
-        path = uri.replace("file://", "")
+        if "tilelang" not in document.source:
+            return  # plain Python file: static hints only, no analyzer needed
+        path = document.path  # pygls to_fs_path: decodes %XX, drives, UNC
         self._ensure_bg()
         # Drain stale queued tasks for this uri (latest-wins).
         kept = []
@@ -151,11 +165,15 @@ class TileLangLanguageServer:
         self._bg_queue.put((uri, path, document.source))
 
     def _full_analysis(self, uri: str, path: str, text: str) -> None:
+        # Idempotent start: guarantees hello (hence the tilelang version in
+        # the cache key) is available even if the initialize-time warm-up
+        # thread has not finished yet.
+        self.analyzer.start()
         cached = self.cache.get(path, text, self.analyzer.target,
                                 (self.analyzer.hello or {}).get("tilelang_version"))
         if cached is not None:
             logger.info("cache hit for %s", path)
-            self._publish(uri, cached)
+            self._publish_if_current(uri, text, cached)
             return
 
         result = self.analyzer.analyze(path)
@@ -173,9 +191,22 @@ class TileLangLanguageServer:
         else:
             self.cache.put(path, text, self.analyzer.target, result,
                            (self.analyzer.hello or {}).get("tilelang_version"))
-        self._publish(uri, result)
+        self._publish_if_current(uri, text, result)
 
     # -- publish ----------------------------------------------------------------
+
+    def _publish_if_current(self, uri: str, text: str, result: dict) -> None:
+        """Publish only when the document still holds the analyzed text.
+
+        The full analysis runs in the background; the user may keep editing
+        or close the file meanwhile. A stale result must not overwrite newer
+        static results (it stays in the content-hash cache either way).
+        """
+        document = self.server.workspace.get_text_document(uri)
+        if document is None or document.source != text:
+            logger.info("discarding stale full-analysis result for %s", uri)
+            return
+        self._publish(uri, result)
 
     def _publish(self, uri: str, result: dict) -> None:
         self.results[uri] = result
@@ -205,6 +236,9 @@ class TileLangLanguageServer:
                 if target:
                     logger.info("target overridden by client: %s", target)
                     self.analyzer.target = str(target)
+            # Warm up the analyzer: faster first analysis, and the disk-cache
+            # key carries the tilelang version from the first file on.
+            threading.Thread(target=self.analyzer.start, daemon=True).start()
 
         @server.feature(TEXT_DOCUMENT_DID_OPEN)
         def did_open(params: DidOpenTextDocumentParams) -> None:
@@ -213,10 +247,10 @@ class TileLangLanguageServer:
 
         @server.feature(TEXT_DOCUMENT_DID_CHANGE)
         def did_change(params: DidChangeTextDocumentParams) -> None:
-            # Pure-AST static pass is millisecond-cheap: run it on every
-            # keystroke for instant feedback; the heavy full analysis waits
-            # for didSave.
-            self._static_refresh(params.text_document.uri)
+            # Debounce keystrokes (latest-wins, 500ms); the timer reads the
+            # newest document text when it fires. The heavy full analysis
+            # still waits for didSave.
+            self._debounce_static(params.text_document.uri)
 
         @server.feature(TEXT_DOCUMENT_DID_SAVE)
         def did_save(params: DidSaveTextDocumentParams) -> None:
@@ -224,6 +258,9 @@ class TileLangLanguageServer:
 
         @server.feature(TEXT_DOCUMENT_DID_CLOSE)
         def did_close(params: DidCloseTextDocumentParams) -> None:
+            timer = self._debounce_timers.pop(params.text_document.uri, None)
+            if timer is not None:
+                timer.cancel()
             self.results.pop(params.text_document.uri, None)
             self.server.text_document_publish_diagnostics(
                 PublishDiagnosticsParams(
@@ -242,7 +279,8 @@ class TileLangLanguageServer:
                 return []
             document = server.workspace.get_text_document(uri)
             lines = document.lines if document is not None else []
-            return _to_lsp_hints(result, lines)
+            visible = (params.range.start.line, params.range.end.line)
+            return _to_lsp_hints(result, lines, visible)
 
         @server.feature(TEXT_DOCUMENT_HOVER)
         def hover(params: HoverParams) -> Optional[Hover]:
@@ -259,6 +297,22 @@ class TileLangLanguageServer:
                 return None
             body = "\n\n---\n\n".join(f"```text\n{d}\n```" for d in details)
             return Hover(contents=MarkupContent(kind=MarkupKind.Markdown, value=body))
+
+    def _debounce_static(self, uri: str) -> None:
+        old = self._debounce_timers.pop(uri, None)
+        if old is not None:
+            old.cancel()
+        timer = threading.Timer(0.5, self._debounced_static_refresh, args=(uri,))
+        timer.daemon = True
+        self._debounce_timers[uri] = timer
+        timer.start()
+
+    def _debounced_static_refresh(self, uri: str) -> None:
+        self._debounce_timers.pop(uri, None)
+        try:
+            self._static_refresh(uri)
+        except Exception:
+            logger.exception("static refresh failed for %s", uri)
 
     def _static_refresh(self, uri: str) -> None:
         document = self.server.workspace.get_text_document(uri)

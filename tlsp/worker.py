@@ -77,8 +77,13 @@ class AnalyzerClient:
             self._proc = None
             return False
         self._queue = queue.Queue()
-        threading.Thread(target=self._read_loop, daemon=True).start()
-        threading.Thread(target=self._drain_stderr, daemon=True).start()
+        # Pass proc/queue explicitly: after a restart the old reader thread
+        # keeps draining the old process and must signal EOF into the OLD
+        # queue only — never into the new generation's queue.
+        threading.Thread(target=self._read_loop,
+                         args=(self._proc, self._queue), daemon=True).start()
+        threading.Thread(target=self._drain_stderr,
+                         args=(self._proc,), daemon=True).start()
         try:
             msg = self._queue.get(timeout=HELLO_TIMEOUT_S)
         except queue.Empty:
@@ -108,32 +113,37 @@ class AnalyzerClient:
         if proc is not None:
             try:
                 proc.kill()
+                proc.wait(timeout=5)
             except Exception:
                 pass
+            for stream in (proc.stdin, proc.stdout, proc.stderr):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except Exception:
+                    pass
 
     # -- io -------------------------------------------------------------------
 
-    def _read_loop(self) -> None:
-        proc = self._proc
+    def _read_loop(self, proc: subprocess.Popen, q: "queue.Queue") -> None:
         try:
-            assert proc is not None and proc.stdout is not None
+            assert proc.stdout is not None
             for line in iter(proc.stdout.readline, b""):
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    self._queue.put(json.loads(line.decode("utf-8")))
+                    q.put(json.loads(line.decode("utf-8")))
                 except ValueError:
                     logger.warning("analyzer: bad JSON line: %r", line[:200])
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("analyzer read loop ended: %s", exc)
         finally:
-            self._queue.put(None)
+            q.put(None)
 
-    def _drain_stderr(self) -> None:
-        proc = self._proc
+    def _drain_stderr(self, proc: subprocess.Popen) -> None:
         try:
-            assert proc is not None and proc.stderr is not None
+            assert proc.stderr is not None
             for line in iter(proc.stderr.readline, b""):
                 logger.debug("analyzer: %s", line.decode("utf-8", "replace").rstrip())
         except Exception:

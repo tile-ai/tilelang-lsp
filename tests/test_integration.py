@@ -64,10 +64,14 @@ class TestAnalyzerIntegration(unittest.TestCase):
         kernel = [h for h in r["hints"] if h["kind"] == "kernel"]
         self.assertEqual(len(kernel), 1)
         self.assertEqual(kernel[0]["line"], 14)
-        self.assertIn("threads=128", kernel[0]["label"])
+        # target c lowers launches to serial loops: no SIMT thread binding.
+        self.assertEqual(kernel[0]["label"], "⟨kernel⟩")
         c_local = [h for h in r["hints"] if h.get("buffer") == "C_local"]
         self.assertTrue(any("Fragment" in h["label"] for h in c_local))
         self.assertTrue(any(h.get("detail") for h in c_local))
+        # CPU lowering yields thread: 1, not the SIMT thread: 128.
+        self.assertTrue(any("thread: 1" in (h.get("detail") or "")
+                            for h in c_local))
 
     def test_gemm_partial_layout_failure(self):
         r = run_analyzer_once("gemm_partial.py")
@@ -98,7 +102,26 @@ class TestAnalyzerIntegration(unittest.TestCase):
         kernel = [h for h in r["hints"] if h["kind"] == "kernel"]
         self.assertEqual(len(kernel), 1)
         self.assertEqual(kernel[0]["line"], 24)
-        self.assertIn("threads=64", kernel[0]["label"])
+        # target c: serial-loop lowering, no SIMT threads in the label.
+        self.assertEqual(kernel[0]["label"], "⟨kernel⟩")
+
+    def test_prologue_survives_missing_pass_attr(self):
+        # An installed build lagging the source tree (pass wrapper missing
+        # entirely) must degrade to warnings, never raise.
+        code = (
+            "import tilelang.transform as T\n"
+            "del T.Simplify\n"
+            "from tlsp.prologue import build_target, prologue_stages\n"
+            "stages, warns = prologue_stages(build_target('c'))\n"
+            "assert any('Simplify' in w for w in warns), warns\n"
+            "names = [n for n, _ in stages]\n"
+            "assert 'Simplify' not in names and 'LayoutInference' in names, names\n"
+        )
+        proc = subprocess.run(
+            [TEST_PYTHON, "-c", code],
+            capture_output=True, text=True, env=_child_env(), timeout=180,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
 
     def test_tracer_matches_span_lines(self):
         span = run_analyzer_once("elementwise_add.py")
@@ -188,6 +211,13 @@ class LSPClient:
             self.proc.wait(timeout=10)
         except Exception:
             self.proc.kill()
+        finally:
+            for stream in (self.proc.stdin, self.proc.stdout):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except Exception:
+                    pass
 
 
 @unittest.skipUnless(TEST_PYTHON, "TLSP_TEST_PYTHON not set")
@@ -245,7 +275,8 @@ class TestLSPSession(unittest.TestCase):
             time.sleep(1.0)
         self.assertTrue(any("Fragment" in label for label in full_labels),
                         f"no layout hints after full analysis: {full_labels}")
-        self.assertTrue(any("threads=128" in label for label in full_labels))
+        # target c lowers to serial loops: thread: 1, not SIMT threads=128.
+        self.assertTrue(any("thread: 1" in label for label in full_labels))
 
         # The server must push workspace/inlayHint/refresh after a background
         # analysis, otherwise real clients keep showing the stale static hints
