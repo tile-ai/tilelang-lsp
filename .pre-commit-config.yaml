@@ -47,3 +47,11 @@ repos:
     hooks:
       - id: pymarkdown
         args: ["--config", ".pymarkdown", "fix"]
+  - repo: local
+    hooks:
+      - id: eslint-extension
+        name: eslint (VS Code extension)
+        entry: bash -c 'cd tilelang_lsp_extension && npx --no-install eslint src --max-warnings 0'
+        language: system
+        files: ^tilelang_lsp_extension/.*\.ts$
+        pass_filenames: false
