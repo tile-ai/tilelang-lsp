@@ -9,12 +9,12 @@ and precise diagnostics.
 ## Features
 
 - **Inlay hints** at end of line, five kinds:
-    - `alloc` — `X = T.alloc_*(...)` lines: shape/dtype/scope, plus the inferred
-      `Layout`/`Fragment` once LayoutInference has run
-    - `param` — kernel signature parameters: `⟨(M, K) float16 @global⟩`
-    - `op` — `T.copy` / `T.gemm` / ... lines: short summary of the layouts involved
-    - `loop` — `T.Pipelined` / `T.Parallel` lines: `⟨pipelined, stages=3⟩`, parallel loop layout
-    - `kernel` — `with T.Kernel(...)` line: grid dims and thread count
+  - `alloc` — `X = T.alloc_*(...)` lines: shape/dtype/scope, plus the inferred
+    `Layout`/`Fragment` once LayoutInference has run
+  - `param` — kernel signature parameters: `⟨(M, K) float16 @global⟩`
+  - `op` — `T.copy` / `T.gemm` / ... lines: short summary of the layouts involved
+  - `loop` — `T.Pipelined` / `T.Parallel` lines: `⟨pipelined, stages=3⟩`, parallel loop layout
+  - `kernel` — `with T.Kernel(...)` line: grid dims and thread count
 - **Hover** on a hint line shows the full layout/fragment text.
 - **Diagnostics** at three precision levels (see below).
 - **Works while your kernel does not compile**: a four-level degradation chain still
@@ -106,7 +106,7 @@ If the analyzer subprocess itself crashes or tilelang is missing entirely, the s
 falls back to static mode with a file-level (L3) diagnostic explaining why.
 
 While you type (before saving), hints come from the same static analysis running
-in-process — so they stay responsive and correct for unparseable intermediate states.
+in-process — so they stay responsive and correct for unparsable intermediate states.
 
 ## Development
 

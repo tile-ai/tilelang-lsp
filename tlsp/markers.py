@@ -13,7 +13,6 @@ stays usable in tilelang-less (static-only) contexts.
 from __future__ import annotations
 
 import re
-from typing import Optional, Tuple
 
 _FALLBACK_PATTERN = (
     # The file part is lazy so the trailing ":line[:col]" is split off from
@@ -25,7 +24,7 @@ _FALLBACK_PATTERN = (
 )
 
 
-def _load_marker_re() -> "re.Pattern[str]":
+def _load_marker_re() -> re.Pattern[str]:
     # re.MULTILINE is required: after enrich_error renders the clang-style
     # snippet, the `-->` header is no longer at end-of-string. The upstream
     # regex is compiled without it, so we always use a local MULTILINE build
@@ -43,7 +42,7 @@ def _load_marker_re() -> "re.Pattern[str]":
 MARKER_RE = _load_marker_re()
 
 
-def parse_location_marker(message: str) -> Optional[Tuple[str, int, int]]:
+def parse_location_marker(message: str) -> tuple[str, int, int] | None:
     """Extract (file, line, col) from a compiler error message, or None.
 
     Col defaults to 1 when the marker carries no column (line-level spans).

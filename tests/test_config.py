@@ -39,14 +39,7 @@ class TestDirectives(unittest.TestCase):
 
 class TestKernelDefs(unittest.TestCase):
     def test_find_jit_kernels(self):
-        src = (
-            "import tilelang\n"
-            "@tilelang.jit\n"
-            "def k1(A): ...\n"
-            "@tilelang.jit(target='c')\n"
-            "def k2(A): ...\n"
-            "def plain(): ...\n"
-        )
+        src = "import tilelang\n@tilelang.jit\ndef k1(A): ...\n@tilelang.jit(target='c')\ndef k2(A): ...\ndef plain(): ...\n"
         defs = find_kernel_defs(ast.parse(src))
         self.assertEqual(defs, {"k1": 3, "k2": 5})
 
@@ -87,28 +80,17 @@ class TestResolveConfig(unittest.TestCase):
         self.assertEqual(cfg.kernel, "matmul")
         self.assertEqual(cfg.origin, "directive")
         self.assertEqual(cfg.kwargs["block_M"], 256)  # directive wins
-        self.assertEqual(cfg.kwargs["M"], 1024)       # from call
-        self.assertEqual(cfg.kwargs["block_N"], 64)   # from defaults
+        self.assertEqual(cfg.kwargs["M"], 1024)  # from call
+        self.assertEqual(cfg.kwargs["block_N"], 64)  # from defaults
 
     def test_kernel_selection_by_directive(self):
-        src = (
-            "import tilelang\n"
-            "@tilelang.jit\n"
-            "def k1(A): ...\n"
-            "# <typecheck> kernel=k2, M=16\n"
-            "@tilelang.jit\n"
-            "def k2(A, M): ...\n"
-        )
+        src = "import tilelang\n@tilelang.jit\ndef k1(A): ...\n# <typecheck> kernel=k2, M=16\n@tilelang.jit\ndef k2(A, M): ...\n"
         cfg = resolve_config(src)
         self.assertEqual(cfg.kernel, "k2")
         self.assertEqual(cfg.kwargs, {"M": 16})
 
     def test_defaults_only(self):
-        src = (
-            "import tilelang\n"
-            "@tilelang.jit\n"
-            "def k(A, block_M=128): ...\n"
-        )
+        src = "import tilelang\n@tilelang.jit\ndef k(A, block_M=128): ...\n"
         cfg = resolve_config(src)
         self.assertEqual(cfg.kwargs, {"block_M": 128})
         self.assertEqual(cfg.origin, "defaults")
@@ -119,10 +101,7 @@ class TestResolveConfig(unittest.TestCase):
         self.assertEqual(cfg.origin, "none")
 
     def test_syntax_error_still_reads_directives(self):
-        src = (
-            "# <typecheck> kernel=matmul, M=1024\n"
-            "def matmul(A, M  # broken mid-edit\n"
-        )
+        src = "# <typecheck> kernel=matmul, M=1024\ndef matmul(A, M  # broken mid-edit\n"
         cfg = resolve_config(src)
         self.assertEqual(cfg.kernel, "matmul")
         self.assertEqual(cfg.kwargs, {"M": 1024})

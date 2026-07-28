@@ -17,18 +17,20 @@ import argparse
 import json
 import sys
 
-from . import __version__, protocol
+from . import protocol
 
 
 def _serve() -> int:
     from . import pipeline
 
     # Announce capabilities before any request.
-    protocol.write_message(protocol.hello_result(
-        tilelang_version=pipeline.tilelang_version(),
-        span_supported=pipeline.span_supported(),
-        error=pipeline._TILELANG_ERR,
-    ))
+    protocol.write_message(
+        protocol.hello_result(
+            tilelang_version=pipeline.tilelang_version(),
+            span_supported=pipeline.span_supported(),
+            error=pipeline._TILELANG_ERR,
+        )
+    )
 
     while True:
         try:
@@ -44,9 +46,7 @@ def _serve() -> int:
         if method == "shutdown":
             return 0
         if method != "analyze":
-            protocol.write_message(
-                protocol.err_response(req_id, "unknown-method", str(method))
-            )
+            protocol.write_message(protocol.err_response(req_id, "unknown-method", str(method)))
             continue
 
         params = request.get("params") or {}
@@ -59,9 +59,7 @@ def _serve() -> int:
             )
             protocol.write_message(protocol.ok_response(req_id, result))
         except Exception as exc:  # analyze() itself is total; this is paranoia
-            protocol.write_message(
-                protocol.err_response(req_id, "internal", f"{type(exc).__name__}: {exc}")
-            )
+            protocol.write_message(protocol.err_response(req_id, "internal", f"{type(exc).__name__}: {exc}"))
 
 
 def _once(argv) -> int:
@@ -69,16 +67,13 @@ def _once(argv) -> int:
     parser.add_argument("--once", metavar="PATH", required=True)
     parser.add_argument("--target", default="cuda")
     parser.add_argument("--kernel", default=None)
-    parser.add_argument("--kwargs", default=None,
-                        help="JSON object of extra kernel kwargs")
+    parser.add_argument("--kwargs", default=None, help="JSON object of extra kernel kwargs")
     args = parser.parse_args(argv)
 
     from . import pipeline
 
     kwargs = json.loads(args.kwargs) if args.kwargs else None
-    result = pipeline.analyze(
-        path=args.once, kernel=args.kernel, kwargs=kwargs, target_str=args.target
-    )
+    result = pipeline.analyze(path=args.once, kernel=args.kernel, kwargs=kwargs, target_str=args.target)
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
     return 0

@@ -1,5 +1,4 @@
 import io
-import json
 import os
 import tempfile
 import unittest
@@ -50,14 +49,8 @@ class TestAnalyzerClient(unittest.TestCase):
         self.assertIn("span_supported", hello)
 
     def test_analyze_static_file(self):
-        with tempfile.NamedTemporaryFile(
-            "w", suffix=".py", delete=False
-        ) as f:
-            f.write(
-                "import tilelang.language as T\n"
-                "def k():\n"
-                "    A = T.alloc_shared((8, 8), T.float16)\n"
-            )
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write("import tilelang.language as T\ndef k():\n    A = T.alloc_shared((8, 8), T.float16)\n")
             path = f.name
         self.addCleanup(os.unlink, path)
 
@@ -68,9 +61,7 @@ class TestAnalyzerClient(unittest.TestCase):
         self.assertIn("⟨(8, 8) float16 @shared.dyn⟩", labels)
         # tilelang missing here -> static mode with an explanatory diagnostic;
         # a tilelang-capable env may reach further modes.
-        self.assertIn(result["meta"]["mode"],
-                      (protocol.MODE_STATIC, protocol.MODE_FULL,
-                       protocol.MODE_PARTIAL, protocol.MODE_TRACER))
+        self.assertIn(result["meta"]["mode"], (protocol.MODE_STATIC, protocol.MODE_FULL, protocol.MODE_PARTIAL, protocol.MODE_TRACER))
 
     def test_analyze_missing_file(self):
         result = self.client.analyze("/nonexistent/definitely_missing.py")
@@ -111,8 +102,7 @@ class TestResultCache(unittest.TestCase):
             os.environ["TLSP_CACHE_DIR"] = tmp
             try:
                 cache = ResultCache()
-                result = protocol.make_result(mode=protocol.MODE_STATIC,
-                                              hints=[protocol.make_hint(1, "alloc", "x")])
+                result = protocol.make_result(mode=protocol.MODE_STATIC, hints=[protocol.make_hint(1, "alloc", "x")])
                 cache.put("/p/a.py", "content-1", "c", result, tl_version="0")
                 hit = cache.get("/p/a.py", "content-1", "c", tl_version="0")
                 self.assertIsNotNone(hit)
@@ -135,12 +125,9 @@ class TestResultCache(unittest.TestCase):
                 cache = ResultCache()
                 result = protocol.make_result(mode=protocol.MODE_STATIC)
                 cache.put("/p/a.py", "content", "c", result, tl_version="1.0")
-                self.assertIsNotNone(
-                    cache.get("/p/a.py", "content", "c", tl_version="1.0"))
-                self.assertIsNone(
-                    cache.get("/p/a.py", "content", "c", tl_version=None))
-                self.assertIsNone(
-                    cache.get("/p/a.py", "content", "c", tl_version="2.0"))
+                self.assertIsNotNone(cache.get("/p/a.py", "content", "c", tl_version="1.0"))
+                self.assertIsNone(cache.get("/p/a.py", "content", "c", tl_version=None))
+                self.assertIsNone(cache.get("/p/a.py", "content", "c", tl_version="2.0"))
             finally:
                 os.environ.pop("TLSP_CACHE_DIR", None)
 

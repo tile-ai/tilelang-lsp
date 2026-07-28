@@ -27,4 +27,4 @@ def elementwise_add(A, B, block_M, block_N, in_dtype, out_dtype, threads):
     return C
 
 
-# <typecheck> M=1024, N=1024, block_M=32, block_N=32, threads=128, in_dtype="float32", out_dtype="float32"
+# <typecheck> kernel=elementwise_add, M=1024, N=1024, block_M=32, block_N=32, threads=128, in_dtype="float32", out_dtype="float32"

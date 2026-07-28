@@ -16,7 +16,7 @@ import ast
 import io
 import tokenize
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 DIRECTIVE_MARK = "<typecheck>"
 
@@ -24,19 +24,19 @@ DIRECTIVE_MARK = "<typecheck>"
 @dataclass
 class Directive:
     lineno: int
-    kernel: Optional[str]
-    kwargs: Dict[str, Any]
+    kernel: str | None
+    kwargs: dict[str, Any]
 
 
 @dataclass
 class KernelConfig:
-    kernel: Optional[str]
-    kwargs: Dict[str, Any] = field(default_factory=dict)
+    kernel: str | None
+    kwargs: dict[str, Any] = field(default_factory=dict)
     origin: str = "none"  # "directive" | "call" | "defaults" | "none"
-    warnings: List[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
-def _literal(node: ast.AST) -> Tuple[bool, Any]:
+def _literal(node: ast.AST) -> tuple[bool, Any]:
     """Best-effort constant extraction.
 
     Returns (ok, value). ``T.float16``/bare names degrade to their dotted
@@ -58,11 +58,11 @@ def _literal(node: ast.AST) -> Tuple[bool, Any]:
     return False, None
 
 
-def _parse_kwarg_text(text: str) -> Tuple[Dict[str, Any], Optional[str], List[str]]:
+def _parse_kwarg_text(text: str) -> tuple[dict[str, Any], str | None, list[str]]:
     """Parse ``M=1024, kernel=matmul`` style text into (kwargs, kernel, warnings)."""
-    kwargs: Dict[str, Any] = {}
-    kernel: Optional[str] = None
-    warnings: List[str] = []
+    kwargs: dict[str, Any] = {}
+    kernel: str | None = None
+    warnings: list[str] = []
     text = text.strip()
     if not text:
         return kwargs, kernel, warnings
@@ -87,10 +87,10 @@ def _parse_kwarg_text(text: str) -> Tuple[Dict[str, Any], Optional[str], List[st
     return kwargs, kernel, warnings
 
 
-def parse_directives(source: str) -> Tuple[List[Directive], List[str]]:
+def parse_directives(source: str) -> tuple[list[Directive], list[str]]:
     """Extract all ``# <typecheck> ...`` comment directives (tokenize-accurate)."""
-    directives: List[Directive] = []
-    warnings: List[str] = []
+    directives: list[Directive] = []
+    warnings: list[str] = []
     try:
         tokens = tokenize.generate_tokens(io.StringIO(source).readline)
         for tok in tokens:
@@ -99,7 +99,7 @@ def parse_directives(source: str) -> Tuple[List[Directive], List[str]]:
             text = tok.string.lstrip("#").strip()
             if not text.startswith(DIRECTIVE_MARK):
                 continue
-            kwargs, kernel, warns = _parse_kwarg_text(text[len(DIRECTIVE_MARK):])
+            kwargs, kernel, warns = _parse_kwarg_text(text[len(DIRECTIVE_MARK) :])
             warnings.extend(warns)
             directives.append(Directive(lineno=tok.start[0], kernel=kernel, kwargs=kwargs))
     except tokenize.TokenError:
@@ -118,32 +118,28 @@ def _is_jit_decorator(node: ast.AST) -> bool:
     return False
 
 
-def find_kernel_defs(tree: ast.Module) -> Dict[str, int]:
+def find_kernel_defs(tree: ast.Module) -> dict[str, int]:
     """Map of ``@tilelang.jit`` function name -> def line, in document order."""
-    found: Dict[str, int] = {}
+    found: dict[str, int] = {}
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if any(_is_jit_decorator(d) for d in node.decorator_list):
-                found[node.name] = node.lineno
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(_is_jit_decorator(d) for d in node.decorator_list):
+            found[node.name] = node.lineno
     return found
 
 
-def harvest_call_kwargs(tree: ast.Module, kernel_name: str) -> Dict[str, Any]:
+def harvest_call_kwargs(tree: ast.Module, kernel_name: str) -> dict[str, Any]:
     """Collect literal kwargs from ``<kernel>.compile(...)`` or ``<kernel>(...)`` calls.
 
     Later call sites override earlier ones (``main()`` conventions put the
     canonical invocation last).
     """
-    kwargs: Dict[str, Any] = {}
+    kwargs: dict[str, Any] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
         is_compile = (
-            isinstance(func, ast.Attribute)
-            and func.attr == "compile"
-            and isinstance(func.value, ast.Name)
-            and func.value.id == kernel_name
+            isinstance(func, ast.Attribute) and func.attr == "compile" and isinstance(func.value, ast.Name) and func.value.id == kernel_name
         )
         is_direct = isinstance(func, ast.Name) and func.id == kernel_name
         if not (is_compile or is_direct):
@@ -157,15 +153,15 @@ def harvest_call_kwargs(tree: ast.Module, kernel_name: str) -> Dict[str, Any]:
     return kwargs
 
 
-def signature_defaults(tree: ast.Module, kernel_name: str) -> Dict[str, Any]:
+def signature_defaults(tree: ast.Module, kernel_name: str) -> dict[str, Any]:
     """Literal default values from the kernel function signature."""
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == kernel_name:
             args = node.args
             positional = args.args
             defaults = args.defaults
-            result: Dict[str, Any] = {}
-            for arg, default in zip(positional[len(positional) - len(defaults):], defaults):
+            result: dict[str, Any] = {}
+            for arg, default in zip(positional[len(positional) - len(defaults) :], defaults):
                 ok, val = _literal(default)
                 if ok:
                     result[arg.arg] = val
@@ -179,9 +175,7 @@ def signature_defaults(tree: ast.Module, kernel_name: str) -> Dict[str, Any]:
     return {}
 
 
-def _choose_kernel(
-    directives: List[Directive], kernel_defs: Dict[str, int]
-) -> Optional[str]:
+def _choose_kernel(directives: list[Directive], kernel_defs: dict[str, int]) -> str | None:
     named = [d for d in directives if d.kernel]
     for d in reversed(named):
         if d.kernel in kernel_defs:
@@ -191,9 +185,7 @@ def _choose_kernel(
     return named[-1].kernel if named else None
 
 
-def _choose_directive(
-    directives: List[Directive], kernel: str, def_line: Optional[int]
-) -> Optional[Directive]:
+def _choose_directive(directives: list[Directive], kernel: str, def_line: int | None) -> Directive | None:
     """Nearest applicable directive above the kernel def (else nearest overall)."""
     applicable = [d for d in directives if d.kernel is None or d.kernel == kernel]
     if not applicable:
@@ -207,7 +199,7 @@ def _choose_directive(
 
 def resolve_config(source: str) -> KernelConfig:
     """Resolve (kernel, kwargs) for a TileLang source file."""
-    warnings: List[str] = []
+    warnings: list[str] = []
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -218,13 +210,11 @@ def resolve_config(source: str) -> KernelConfig:
             if d.kernel:
                 kernel = d.kernel
                 break
-        merged: Dict[str, Any] = {}
+        merged: dict[str, Any] = {}
         for d in directives:
             if kernel is None or d.kernel in (None, kernel):
                 merged.update(d.kwargs)
-        return KernelConfig(kernel=kernel, kwargs=merged,
-                            origin="directive" if merged or kernel else "none",
-                            warnings=warns)
+        return KernelConfig(kernel=kernel, kwargs=merged, origin="directive" if merged or kernel else "none", warnings=warns)
 
     kernel_defs = find_kernel_defs(tree)
     directives, warns = parse_directives(source)
@@ -233,7 +223,7 @@ def resolve_config(source: str) -> KernelConfig:
     if kernel is None:
         return KernelConfig(kernel=None, origin="none", warnings=warnings)
 
-    kwargs: Dict[str, Any] = {}
+    kwargs: dict[str, Any] = {}
     origin = "none"
 
     defaults = signature_defaults(tree, kernel)

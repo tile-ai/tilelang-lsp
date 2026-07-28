@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, BinaryIO, Optional
+from typing import Any, BinaryIO
 
 SCHEMA_VERSION = 2
 
@@ -77,8 +77,8 @@ def make_hint(
     line: int,
     kind: str,
     label: str,
-    detail: Optional[str] = None,
-    buffer: Optional[str] = None,
+    detail: str | None = None,
+    buffer: str | None = None,
 ) -> dict:
     return {"line": line, "kind": kind, "buffer": buffer, "label": label, "detail": detail}
 
@@ -89,7 +89,7 @@ def make_diagnostic(
     severity: str = SEVERITY_ERROR,
     source: str = "tilelang",
     col: int = 1,
-    end_line: Optional[int] = None,
+    end_line: int | None = None,
     end_col: int = LINE_END_COL,
 ) -> dict:
     return {
@@ -105,12 +105,12 @@ def make_diagnostic(
 
 def make_result(
     mode: str,
-    hints: Optional[list] = None,
-    diagnostics: Optional[list] = None,
-    symbols: Optional[list] = None,
+    hints: list | None = None,
+    diagnostics: list | None = None,
+    symbols: list | None = None,
     analysis_ms: int = 0,
-    tilelang_version: Optional[str] = None,
-    warnings: Optional[list] = None,
+    tilelang_version: str | None = None,
+    warnings: list | None = None,
 ) -> dict:
     return {
         "version": SCHEMA_VERSION,
@@ -127,9 +127,9 @@ def make_result(
 
 
 def hello_result(
-    tilelang_version: Optional[str],
+    tilelang_version: str | None,
     span_supported: bool,
-    error: Optional[str] = None,
+    error: str | None = None,
 ) -> dict:
     return {
         "method": "hello",
@@ -162,7 +162,7 @@ def write_message(obj: dict, stream=None) -> None:
     stream.flush()
 
 
-def read_message(stream=None) -> Optional[dict]:
+def read_message(stream=None) -> dict | None:
     """Read one NDJSON message; None on EOF, ValueError on bad JSON."""
     stream = stream if stream is not None else sys.stdin
     while True:
@@ -186,7 +186,7 @@ class BinaryChannel:
         self._writer.write(data)
         self._writer.flush()
 
-    def read(self) -> Optional[dict]:
+    def read(self) -> dict | None:
         while True:
             line = self._reader.readline()
             if line == b"":

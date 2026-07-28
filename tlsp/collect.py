@@ -7,9 +7,10 @@ module scope so the module also loads in tilelang-less contexts.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from . import protocol
+import contextlib
 
 _SHORT_LIMIT = 72
 
@@ -64,9 +65,7 @@ def buffer_label(buffer: Any) -> str:
         scope = buffer.scope()
     except Exception:
         scope = None
-    return protocol.format_buffer_label(
-        shape_str(buffer), getattr(buffer, "dtype", None), scope
-    )
+    return protocol.format_buffer_label(shape_str(buffer), getattr(buffer, "dtype", None), scope)
 
 
 def alloc_label(buffer: Any, layout: Any = None) -> str:
@@ -76,7 +75,7 @@ def alloc_label(buffer: Any, layout: Any = None) -> str:
     return label
 
 
-def loop_hint_label(annotations: Any) -> Optional[str]:
+def loop_hint_label(annotations: Any) -> str | None:
     """'⟨pipelined, stages=3⟩' / '⟨parallel ⇒ Fragment(...)⟩' from For annotations."""
     if not annotations:
         return None
@@ -84,10 +83,8 @@ def loop_hint_label(annotations: Any) -> Optional[str]:
     parts = []
     if "num_stages" in items:
         stages = items["num_stages"]
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             stages = int(stages)
-        except (TypeError, ValueError):
-            pass
         parts.append(f"pipelined, stages={stages}")
     if "parallel_loop_layout" in items:
         parts.append(f"parallel ⇒ {short_layout(items['parallel_loop_layout'])}")
@@ -100,12 +97,12 @@ def loop_detail(annotations: Any) -> str:
     if not annotations:
         return ""
     lines = []
-    for key, value in (annotations.items() if hasattr(annotations, "items") else []):
+    for key, value in annotations.items() if hasattr(annotations, "items") else []:
         lines.append(f"{key} = {value}")
     return "\n".join(lines)
 
 
-def kernel_label(grid_dims: list, threads: Optional[Any]) -> str:
+def kernel_label(grid_dims: list, threads: Any | None) -> str:
     parts = []
     if grid_dims:
         parts.append("grid (" + ", ".join(str(d) for d in grid_dims) + ")")

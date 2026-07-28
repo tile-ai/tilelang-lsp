@@ -11,7 +11,7 @@ be *constructed* is skipped with a warning instead of aborting the analysis.
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable
 
 
 def _determine_target(target_str: str):
@@ -34,35 +34,34 @@ def build_target(target_str: str):
 
 
 def _cond_helpers():
-    helpers = {"force_let_inline": lambda: False,
-               "enable_race_check": lambda: False,
-               "allow_warp_specialized": lambda target=None: False}
+    helpers = {"force_let_inline": lambda: False, "enable_race_check": lambda: False, "allow_warp_specialized": lambda target=None: False}
     try:
         from tilelang.backend.pass_pipeline.pipeline_utils import (
             should_enable_race_check,
             should_force_let_inline,
         )
+
         helpers["force_let_inline"] = should_force_let_inline
         helpers["enable_race_check"] = should_enable_race_check
     except Exception:
         pass
     try:
         from tilelang.cuda.pipeline import allow_warp_specialized
+
         helpers["allow_warp_specialized"] = allow_warp_specialized
     except Exception:
         pass
     return helpers
 
 
-def prologue_stages(target) -> Tuple[List[Tuple[str, Any]], List[str]]:
+def prologue_stages(target) -> tuple[list[tuple[str, Any]], list[str]]:
     """(stages, warnings): ordered (name, pass) pairs up to LayoutInference."""
     import tilelang
-    from tilelang import tvm
     from tvm import tirx
 
-    warnings: List[str] = []
+    warnings: list[str] = []
     helpers = _cond_helpers()
-    stages: List[Tuple[str, Any]] = []
+    stages: list[tuple[str, Any]] = []
 
     def add(name: str, ctor: Callable[[], Any]):
         try:
@@ -76,9 +75,7 @@ def prologue_stages(target) -> Tuple[List[Tuple[str, Any]], List[str]]:
     add("BindTarget", lambda: tirx.transform.BindTarget(target))
     # c/llvm lower kernel launches to serial loops (tilelang/cpu/pipeline.py);
     # the SIMT targets keep the default thread binding.
-    add("MaterializeKernelLaunch",
-        lambda: T.MaterializeKernelLaunch(
-            lower_thread_binding=kind not in ("c", "llvm")))
+    add("MaterializeKernelLaunch", lambda: T.MaterializeKernelLaunch(lower_thread_binding=kind not in ("c", "llvm")))
     try:
         if helpers["force_let_inline"]():
             add("LetInline", lambda: T.LetInline())
@@ -98,8 +95,7 @@ def prologue_stages(target) -> Tuple[List[Tuple[str, Any]], List[str]]:
     if kind == "cuda":
         try:
             if helpers["allow_warp_specialized"](target=target):
-                add("ProducerConsumerWarpSpecialized",
-                    lambda: tilelang.cuda.transform.ProducerConsumerWarpSpecialized())
+                add("ProducerConsumerWarpSpecialized", lambda: tilelang.cuda.transform.ProducerConsumerWarpSpecialized())
         except Exception:
             pass
         add("LowerBlackwell2SM", lambda: tilelang.cuda.transform.LowerBlackwell2SM())
@@ -117,7 +113,7 @@ def prologue_stages(target) -> Tuple[List[Tuple[str, Any]], List[str]]:
                 from tilelang.metal.pipeline import MetalFragmentToSimdgroup
 
                 # Module-level function, not a pass object: wrap uniformly.
-                add("MetalFragmentToSimdgroup", lambda: (lambda mod: MetalFragmentToSimdgroup(mod)))
+                add("MetalFragmentToSimdgroup", lambda: lambda mod: MetalFragmentToSimdgroup(mod))
             except Exception as exc:
                 warnings.append(f"pass MetalFragmentToSimdgroup unavailable: {exc}")
     else:  # c / llvm / others: the CPU prologue shape

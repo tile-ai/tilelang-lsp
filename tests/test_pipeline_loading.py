@@ -39,13 +39,16 @@ class TestLoadUserModule(unittest.TestCase):
     def test_dataclass_with_dotted_classvar_annotation(self):
         # dataclasses resolves dotted ClassVar via sys.modules[cls.__module__].
         with tempfile.TemporaryDirectory() as d:
-            path = self._write(d, "mod.py",
-                               "from __future__ import annotations\n"
-                               "import dataclasses\n"
-                               "import typing\n"
-                               "@dataclasses.dataclass\n"
-                               "class C:\n"
-                               "    x: typing.ClassVar[int] = 7\n")
+            path = self._write(
+                d,
+                "mod.py",
+                "from __future__ import annotations\n"
+                "import dataclasses\n"
+                "import typing\n"
+                "@dataclasses.dataclass\n"
+                "class C:\n"
+                "    x: typing.ClassVar[int] = 7\n",
+            )
             module = load_user_module(path)
             self.assertEqual(module.C.x, 7)
 

@@ -15,14 +15,14 @@ class myClass:
     #age = 1
     A= T.alloc_shared(age)
 
-    def __init__(self, age, 
+    def __init__(self, age,
         active
     ):
         a = 1
         age1= 10
         self.actve =False
         A= T.alloc_shared(age)
-    
+
     def myFunction():
         self.age = 0
 
@@ -55,7 +55,7 @@ def function (
     s_acc
     A; Q_shared[1]
     Q_shared = T.alloc_shared([block)
-    
+
     Q_shared == T.alloc_shared(block)
     dtype = "float"
     block = 999

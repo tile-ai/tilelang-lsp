@@ -1,6 +1,5 @@
 import unittest
 
-from tlsp import protocol
 from tlsp.static_fallback import analyze_static
 
 
@@ -68,11 +67,7 @@ def test_func():
         self.assertEqual(result.hints[0]["label"], "⟨(10, 10) float16 @shared.tmem⟩")
 
     def test_hint_line_is_alloc_line(self):
-        code = (
-            "import tilelang.language as T\n"
-            "def test_func():\n"
-            "    A = T.alloc_shared((10, 20), T.float16)\n"
-        )
+        code = "import tilelang.language as T\ndef test_func():\n    A = T.alloc_shared((10, 20), T.float16)\n"
         result = analyze_static(code)
         self.assertEqual(result.hints[0]["line"], 3)
 

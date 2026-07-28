@@ -8,11 +8,11 @@
 ## 功能
 
 - **行尾 inlay hints**，共五类：
-    - `alloc` —— `X = T.alloc_*(...)` 行：shape/dtype/scope；LayoutInference 跑过后附带推断出的 `Layout`/`Fragment`
-    - `param` —— kernel 签名参数：`⟨(M, K) float16 @global⟩`
-    - `op` —— `T.copy` / `T.gemm` 等行：涉及 buffer 布局的短摘要
-    - `loop` —— `T.Pipelined` / `T.Parallel` 行：`⟨pipelined, stages=3⟩`、parallel loop layout
-    - `kernel` —— `with T.Kernel(...)` 行：grid 维度与线程数
+  - `alloc` —— `X = T.alloc_*(...)` 行：shape/dtype/scope；LayoutInference 跑过后附带推断出的 `Layout`/`Fragment`
+  - `param` —— kernel 签名参数：`⟨(M, K) float16 @global⟩`
+  - `op` —— `T.copy` / `T.gemm` 等行：涉及 buffer 布局的短摘要
+  - `loop` —— `T.Pipelined` / `T.Parallel` 行：`⟨pipelined, stages=3⟩`、parallel loop layout
+  - `kernel` —— `with T.Kernel(...)` 行：grid 维度与线程数
 - **Hover**：在 hint 行上悬停查看完整 layout/fragment 文本。
 - **诊断**：三级精度（见下文）。
 - **kernel 编译不过也能用**：四级降级链尽可能给出 hints（见"工作原理"）。

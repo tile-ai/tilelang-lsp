@@ -7,10 +7,11 @@ import sys
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="tlsp")
-    parser.add_argument("--target", default=None,
-                        help="default compilation target for analysis "
-                             "(cuda, c, llvm, metal, webgpu); the editor "
-                             "configuration can override this")
+    parser.add_argument(
+        "--target",
+        default=None,
+        help="default compilation target for analysis (cuda, c, llvm, metal, webgpu); the editor configuration can override this",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args, _unknown = parser.parse_known_args()
 

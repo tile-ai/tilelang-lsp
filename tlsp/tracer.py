@@ -16,22 +16,40 @@ from __future__ import annotations
 import functools
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from . import protocol
 from .collect import alloc_label, buffer_label, kernel_label, short_layout
 
 # name in tilelang.language -> record kind
 _ALLOC_FUNCS = {
-    "alloc_shared", "alloc_local", "alloc_fragment", "alloc_var",
-    "alloc_barrier", "alloc_tmem", "alloc_reducer", "alloc_descriptor",
-    "alloc_wgmma_desc", "alloc_tcgen05_smem_desc",
-    "alloc_tcgen05_instruction_desc", "alloc_tcgen05_instr_desc",
+    "alloc_shared",
+    "alloc_local",
+    "alloc_fragment",
+    "alloc_var",
+    "alloc_barrier",
+    "alloc_tmem",
+    "alloc_reducer",
+    "alloc_descriptor",
+    "alloc_wgmma_desc",
+    "alloc_tcgen05_smem_desc",
+    "alloc_tcgen05_instruction_desc",
+    "alloc_tcgen05_instr_desc",
 }
 _PARAM_FUNCS = {"Tensor", "empty"}
 _OP_FUNCS = {
-    "copy", "gemm", "clear", "fill", "reduce", "atomic_add", "atomic_max",
-    "atomic_min", "cumsum", "cummax", "print", "annotate_layout",
+    "copy",
+    "gemm",
+    "clear",
+    "fill",
+    "reduce",
+    "atomic_add",
+    "atomic_max",
+    "atomic_min",
+    "cumsum",
+    "cummax",
+    "print",
+    "annotate_layout",
 }
 _LOOP_FUNCS = {"Pipelined", "Parallel"}
 _KERNEL_FUNCS = {"Kernel"}
@@ -50,8 +68,8 @@ class TraceRecord:
 class CallTracer:
     def __init__(self, source_file: str):
         self.source_file = source_file
-        self.records: List[TraceRecord] = []
-        self._originals: Dict[str, Any] = {}
+        self.records: list[TraceRecord] = []
+        self._originals: dict[str, Any] = {}
         self._module = None
 
     # -- install / uninstall ------------------------------------------------
@@ -74,7 +92,7 @@ class CallTracer:
         self._originals = {}
         self._module = None
 
-    def __enter__(self) -> "CallTracer":
+    def __enter__(self) -> CallTracer:
         self.install()
         return self
 
@@ -94,10 +112,16 @@ class CallTracer:
             result = original(*args, **kwargs)
             if filename == tracer.source_file:
                 kind = tracer._kind_of(name)
-                tracer.records.append(TraceRecord(
-                    kind=kind, func_name=name, line=line,
-                    args=args, kwargs=dict(kwargs), result=result,
-                ))
+                tracer.records.append(
+                    TraceRecord(
+                        kind=kind,
+                        func_name=name,
+                        line=line,
+                        args=args,
+                        kwargs=dict(kwargs),
+                        result=result,
+                    )
+                )
             return result
 
         return wrapper
@@ -119,14 +143,15 @@ class CallTracer:
 # records -> hints
 # ---------------------------------------------------------------------------
 
-def _record_buffer(record: TraceRecord) -> Optional[Any]:
+
+def _record_buffer(record: TraceRecord) -> Any | None:
     buf = record.result
     if buf is not None and hasattr(buf, "dtype") and hasattr(buf, "shape"):
         return buf
     return None
 
 
-def _norm_dtype(dtype: Any) -> Optional[str]:
+def _norm_dtype(dtype: Any) -> str | None:
     if dtype is None:
         return None
     text = str(dtype)
@@ -142,16 +167,14 @@ def _shape_of(obj: Any) -> Any:
     shape = getattr(obj, "shape", None)
     if shape is not None:
         try:
-            return tuple(
-                int(d) if str(d).isdigit() else str(d) for d in shape
-            )
+            return tuple(int(d) if str(d).isdigit() else str(d) for d in shape)
         except Exception:
             return str(shape)
     return None
 
 
-def _buffers_in_args(args: tuple) -> List[Any]:
-    found: List[Any] = []
+def _buffers_in_args(args: tuple) -> list[Any]:
+    found: list[Any] = []
 
     def walk(obj, depth=0):
         if depth > 4:
@@ -178,12 +201,12 @@ def _shape_concrete(shape: Any) -> bool:
 
 
 def hints_from_records(
-    records: List[TraceRecord],
-    layout_by_name: Optional[Dict[str, Any]] = None,
-) -> List[dict]:
+    records: list[TraceRecord],
+    layout_by_name: dict[str, Any] | None = None,
+) -> list[dict]:
     """Turn trace records into hint dicts (same shape as the span collector)."""
     layout_by_name = layout_by_name or {}
-    hints: List[dict] = []
+    hints: list[dict] = []
     seen = set()
 
     def add(line, kind, label, detail=None, buffer=None):
@@ -193,13 +216,12 @@ def hints_from_records(
         if key in seen:
             return
         seen.add(key)
-        hints.append(protocol.make_hint(line=line, kind=kind, label=label,
-                                        detail=detail, buffer=buffer))
+        hints.append(protocol.make_hint(line=line, kind=kind, label=label, detail=detail, buffer=buffer))
 
     # Alloc/param sites are recorded twice on some code paths (the JIT binder
     # evaluates annotations once symbolically, then again with concrete
     # kwargs). Group by (kind, line) and keep the most concrete record.
-    best: Dict[tuple, tuple] = {}  # (kind, line) -> (score, index, record)
+    best: dict[tuple, tuple] = {}  # (kind, line) -> (score, index, record)
     for i, rec in enumerate(records):
         if rec.kind not in ("alloc", "param"):
             continue
@@ -223,17 +245,14 @@ def hints_from_records(
             if buf is not None:
                 name = getattr(buf, "name", None) or None
                 layout = layout_by_name.get(name)
-                add(rec.line, rec.kind, alloc_label(buf, layout),
-                    detail=None if layout is None else f"{name}: {layout}",
-                    buffer=name)
+                add(rec.line, rec.kind, alloc_label(buf, layout), detail=None if layout is None else f"{name}: {layout}", buffer=name)
             else:
                 # Non-buffer results (e.g. alloc_var scalars): render from args.
                 shape = _shape_of(rec.args[0]) if rec.args else None
                 dtype = _norm_dtype(rec.kwargs.get("dtype"))
                 if dtype is None and len(rec.args) > 1:
                     dtype = _norm_dtype(rec.args[1])
-                add(rec.line, rec.kind,
-                    protocol.format_buffer_label(shape, dtype, rec.kwargs.get("scope")))
+                add(rec.line, rec.kind, protocol.format_buffer_label(shape, dtype, rec.kwargs.get("scope")))
         elif rec.kind == "op":
             buffers = _buffers_in_args(rec.args)
             parts = []
@@ -268,9 +287,9 @@ def hints_from_records(
     return hints
 
 
-def layout_map_by_name(layout_maps: List[Any]) -> Dict[str, Any]:
+def layout_map_by_name(layout_maps: list[Any]) -> dict[str, Any]:
     """Merge per-block layout_map annotations into a name -> layout dict."""
-    merged: Dict[str, Any] = {}
+    merged: dict[str, Any] = {}
     for layout_map in layout_maps:
         if not layout_map:
             continue

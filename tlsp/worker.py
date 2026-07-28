@@ -14,9 +14,9 @@ import subprocess
 import sys
 import threading
 from collections import OrderedDict
-from typing import Optional
 
 from . import protocol
+import contextlib
 
 logger = logging.getLogger("tlsp.worker")
 
@@ -35,11 +35,11 @@ class AnalyzerClient:
 
     def __init__(self, target: str = "cuda"):
         self.target = target
-        self._proc: Optional[subprocess.Popen] = None
-        self._queue: "queue.Queue" = queue.Queue()
+        self._proc: subprocess.Popen | None = None
+        self._queue: queue.Queue = queue.Queue()
         self._lock = threading.Lock()
         self._req_id = 0
-        self.hello: Optional[dict] = None
+        self.hello: dict | None = None
         self._restart_used = False
 
     # -- lifecycle -----------------------------------------------------------
@@ -80,10 +80,8 @@ class AnalyzerClient:
         # Pass proc/queue explicitly: after a restart the old reader thread
         # keeps draining the old process and must signal EOF into the OLD
         # queue only — never into the new generation's queue.
-        threading.Thread(target=self._read_loop,
-                         args=(self._proc, self._queue), daemon=True).start()
-        threading.Thread(target=self._drain_stderr,
-                         args=(self._proc,), daemon=True).start()
+        threading.Thread(target=self._read_loop, args=(self._proc, self._queue), daemon=True).start()
+        threading.Thread(target=self._drain_stderr, args=(self._proc,), daemon=True).start()
         try:
             msg = self._queue.get(timeout=HELLO_TIMEOUT_S)
         except queue.Empty:
@@ -101,10 +99,8 @@ class AnalyzerClient:
     def shutdown(self) -> None:
         with self._lock:
             if self.alive:
-                try:
+                with contextlib.suppress(Exception):
                     self._write({"method": "shutdown"})
-                except Exception:
-                    pass
             self._kill_locked()
 
     def _kill_locked(self) -> None:
@@ -125,7 +121,7 @@ class AnalyzerClient:
 
     # -- io -------------------------------------------------------------------
 
-    def _read_loop(self, proc: subprocess.Popen, q: "queue.Queue") -> None:
+    def _read_loop(self, proc: subprocess.Popen, q: queue.Queue) -> None:
         try:
             assert proc.stdout is not None
             for line in iter(proc.stdout.readline, b""):
@@ -157,31 +153,38 @@ class AnalyzerClient:
 
     # -- requests ---------------------------------------------------------------
 
-    def analyze(self, path: str, kernel: Optional[str] = None,
-                kwargs: Optional[dict] = None) -> Optional[dict]:
+    def analyze(self, path: str, kernel: str | None = None, kwargs: dict | None = None) -> dict | None:
         """Run a full analysis; None when the analyzer is unavailable."""
         with self._lock:
             if not self._start_locked():
                 return None
-            result = self._request_locked({
-                "path": path, "kernel": kernel, "kwargs": kwargs or {},
-                "target": self.target,
-            })
+            result = self._request_locked(
+                {
+                    "path": path,
+                    "kernel": kernel,
+                    "kwargs": kwargs or {},
+                    "target": self.target,
+                }
+            )
             if result is None and not self._restart_used:
                 # One restart per client lifetime for a wedged/crashed worker.
                 self._restart_used = True
                 logger.warning("analyzer request failed; restarting worker once")
                 self._kill_locked()
                 if self._start_locked():
-                    result = self._request_locked({
-                        "path": path, "kernel": kernel, "kwargs": kwargs or {},
-                        "target": self.target,
-                    })
+                    result = self._request_locked(
+                        {
+                            "path": path,
+                            "kernel": kernel,
+                            "kwargs": kwargs or {},
+                            "target": self.target,
+                        }
+                    )
             if result is not None:
                 self._restart_used = False
             return result
 
-    def _request_locked(self, params: dict) -> Optional[dict]:
+    def _request_locked(self, params: dict) -> dict | None:
         self._req_id += 1
         req_id = self._req_id
         try:
@@ -211,9 +214,7 @@ class AnalyzerClient:
 
 
 def _cache_dir() -> str:
-    return os.environ.get(
-        "TLSP_CACHE_DIR", os.path.expanduser("~/.cache/tilelang_lsp")
-    )
+    return os.environ.get("TLSP_CACHE_DIR", os.path.expanduser("~/.cache/tilelang_lsp"))
 
 
 def _content_hash(text: str) -> str:
@@ -224,15 +225,13 @@ class ResultCache:
     """Memory LRU + content-hash-keyed disk cache of analysis results."""
 
     def __init__(self):
-        self._mem: "OrderedDict[str, dict]" = OrderedDict()
+        self._mem: OrderedDict[str, dict] = OrderedDict()
 
-    def _key(self, path: str, text: str, target: str, tl_version: Optional[str]) -> str:
-        raw = json.dumps([os.path.abspath(path), _content_hash(text), target,
-                          tl_version or ""])
+    def _key(self, path: str, text: str, target: str, tl_version: str | None) -> str:
+        raw = json.dumps([os.path.abspath(path), _content_hash(text), target, tl_version or ""])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    def get(self, path: str, text: str, target: str,
-            tl_version: Optional[str] = None) -> Optional[dict]:
+    def get(self, path: str, text: str, target: str, tl_version: str | None = None) -> dict | None:
         key = self._key(path, text, target, tl_version)
         hit = self._mem.get(key)
         if hit is not None:
@@ -248,8 +247,7 @@ class ResultCache:
         except (OSError, ValueError):
             return None
 
-    def put(self, path: str, text: str, target: str, result: dict,
-            tl_version: Optional[str] = None) -> None:
+    def put(self, path: str, text: str, target: str, result: dict, tl_version: str | None = None) -> None:
         key = self._key(path, text, target, tl_version)
         self._mem[key] = result
         self._evict_mem()
@@ -269,11 +267,7 @@ class ResultCache:
 
     def _evict_disk(self) -> None:
         try:
-            files = [
-                os.path.join(_cache_dir(), f)
-                for f in os.listdir(_cache_dir())
-                if f.endswith(".json")
-            ]
+            files = [os.path.join(_cache_dir(), f) for f in os.listdir(_cache_dir()) if f.endswith(".json")]
             if len(files) <= DISK_CACHE_CAP:
                 return
             files.sort(key=os.path.getmtime)
@@ -281,5 +275,3 @@ class ResultCache:
                 os.unlink(f)
         except OSError:
             pass
-
-

@@ -1,8 +1,6 @@
 # tilelang_LSP_extension README
 
-
 ## Release Notes
-
 
 ### 0.0.1
 
@@ -27,7 +25,6 @@ vsce package
 ```
 If there are some confirmations that show up in the console, please type in "yes".
 Once the extension is packaged, an extension program "tilelang-type-decorator-(*version).vsix" will appear in the current folder, and you can install this extension with VSCode.
-
 
 If you are a developer and you wish to debug the extension, you can run
 

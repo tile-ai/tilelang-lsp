@@ -12,7 +12,7 @@ macros carry the macro definition's span, which may live in another file.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from . import protocol
 from .collect import (
@@ -39,12 +39,12 @@ def _imports():
 
 
 class SpanCollector:
-    def __init__(self, source_file: str, index: Optional[StaticIndex] = None):
+    def __init__(self, source_file: str, index: StaticIndex | None = None):
         self.source_file = source_file
         self.index = index or StaticIndex()
-        self.hints: List[dict] = []
-        self.layout_by_name: Dict[str, Any] = {}
-        self.buffer_by_name: Dict[str, Any] = {}
+        self.hints: list[dict] = []
+        self.layout_by_name: dict[str, Any] = {}
+        self.buffer_by_name: dict[str, Any] = {}
         self._seen: set = set()
         (
             self._tirx,
@@ -56,33 +56,38 @@ class SpanCollector:
 
     # -- location helpers ---------------------------------------------------
 
-    def _stmt_line(self, node: Any) -> Optional[int]:
+    def _stmt_line(self, node: Any) -> int | None:
         loc = self._span_to_location(self._get_stmt_span(node))
         if loc and loc[0] == self.source_file:
             return loc[1]
         return None
 
-    def _buffer_line(self, buffer: Any) -> Optional[int]:
+    def _buffer_line(self, buffer: Any) -> int | None:
         loc = self._span_to_location(self._get_buffer_span(buffer))
         if loc and loc[0] == self.source_file:
             return loc[1]
         return None
 
-    def _add(self, line: Optional[int], kind: str, label: str,
-             detail: Optional[str] = None, buffer: Optional[str] = None):
+    def _add(self, line: int | None, kind: str, label: str, detail: str | None = None, buffer: str | None = None):
         if line is None or not label:
             return
         key = (kind, line, buffer or label)
         if key in self._seen:
             return
         self._seen.add(key)
-        self.hints.append(protocol.make_hint(
-            line=line, kind=kind, label=label, detail=detail, buffer=buffer,
-        ))
+        self.hints.append(
+            protocol.make_hint(
+                line=line,
+                kind=kind,
+                label=label,
+                detail=detail,
+                buffer=buffer,
+            )
+        )
 
     # -- main entry -----------------------------------------------------------
 
-    def collect(self, func: Any, fresh_func: Any = None) -> List[dict]:
+    def collect(self, func: Any, fresh_func: Any = None) -> list[dict]:
         """Collect hints from `func` (any IR state).
 
         `fresh_func` (the parse-time PrimFunc) is only used to recover the
@@ -98,6 +103,7 @@ class SpanCollector:
                     for buf, layout in layout_map.items():
                         self.layout_by_name.setdefault(buf.name, layout)
                         self.buffer_by_name.setdefault(buf.name, buf)
+
         self._post_order_visit(func.body, harvest)
 
         # Pass 2: emit hints.
@@ -108,6 +114,7 @@ class SpanCollector:
                 self._visit_for(node)
             elif isinstance(node, tirx.Evaluate):
                 self._visit_evaluate(node)
+
         self._post_order_visit(func.body, visit)
 
         self._collect_params(func)
@@ -127,16 +134,14 @@ class SpanCollector:
                 mapped.add(buf.name)
                 self.buffer_by_name.setdefault(buf.name, buf)
                 line = self._buffer_line(buf)
-                self._add(line, protocol.HINT_ALLOC, alloc_label(buf, layout),
-                          detail=full_layout_text(buf, layout), buffer=buf.name)
+                self._add(line, protocol.HINT_ALLOC, alloc_label(buf, layout), detail=full_layout_text(buf, layout), buffer=buf.name)
         # b) alloc_buffers without a layout entry -> shape-only alloc hints
         for buf in block.alloc_buffers or []:
             if buf.name in mapped:
                 continue
             self.buffer_by_name.setdefault(buf.name, buf)
             line = self._buffer_line(buf)
-            self._add(line, protocol.HINT_ALLOC, alloc_label(buf),
-                      detail=buffer_label(buf), buffer=buf.name)
+            self._add(line, protocol.HINT_ALLOC, alloc_label(buf), detail=buffer_label(buf), buffer=buf.name)
 
     def _visit_for(self, node: Any):
         if not node.annotations:
@@ -145,8 +150,7 @@ class SpanCollector:
         if not label:
             return
         line = self._stmt_line(node)
-        self._add(line, protocol.HINT_LOOP, label,
-                  detail=loop_detail(node.annotations))
+        self._add(line, protocol.HINT_LOOP, label, detail=loop_detail(node.annotations))
 
     def _visit_evaluate(self, node: Any):
         call = getattr(node, "value", None)
@@ -157,24 +161,23 @@ class SpanCollector:
         line = self._stmt_line(node)
         if line is None:
             return
-        op_name = name[len(TILE_OP_PREFIX):]
+        op_name = name[len(TILE_OP_PREFIX) :]
         buffers = self._call_buffers(call)
         label, detail = self._op_text(op_name, buffers)
         self._add(line, protocol.HINT_OP, label, detail=detail)
 
-    def _call_buffers(self, call: Any) -> List[Any]:
+    def _call_buffers(self, call: Any) -> list[Any]:
         """Buffers referenced by a tile-op call, in arg order, deduped.
 
         Tile-op args are themselves Calls (e.g. tl.region(...)) whose children
         are BufferLoad/BufferRegion nodes; tvm Arrays are not list/tuple, so
         child traversal is duck-typed.
         """
-        found: List[Any] = []
+        found: list[Any] = []
 
         def add(buf):
-            if buf is not None and hasattr(buf, "name"):
-                if not any(buf.same_as(b) for b in found):
-                    found.append(buf)
+            if buf is not None and hasattr(buf, "name") and not any(buf.same_as(b) for b in found):
+                found.append(buf)
 
         def walk(obj, depth=0):
             if depth > 8 or obj is None or isinstance(obj, (str, int, float, bool)):
@@ -198,10 +201,10 @@ class SpanCollector:
         walk(call)
         return found
 
-    def _op_text(self, op_name: str, buffers: List[Any]) -> Tuple[str, Optional[str]]:
+    def _op_text(self, op_name: str, buffers: list[Any]) -> tuple[str, str | None]:
         label = f"⟨{op_name}"
         primary = None
-        detail_lines: List[str] = []
+        detail_lines: list[str] = []
         for buf in buffers:
             layout = self.layout_by_name.get(buf.name)
             text = buffer_label(buf)
@@ -220,31 +223,33 @@ class SpanCollector:
     # -- params / kernel --------------------------------------------------------
 
     def _collect_params(self, func: Any):
-        for _var, buf in (func.buffer_map.items() if func.buffer_map else []):
+        for _var, buf in func.buffer_map.items() if func.buffer_map else []:
             self.buffer_by_name.setdefault(buf.name, buf)
             line = self._buffer_line(buf)
-            fallback = None
             if line is None:
                 # Parameter buffer has no span: old span_dev builds had an
                 # upstream stamping bug (fixed since — see KNOWN_ISSUES.md).
                 # Fall back to the AST name index.
-                fallback = "ast-name"
                 line = self.index.params.get(buf.name)
             layout = self.layout_by_name.get(buf.name)
-            self._add(line, protocol.HINT_PARAM, alloc_label(buf, layout),
-                      detail=None if layout is None else full_layout_text(buf, layout),
-                      buffer=buf.name)
+            self._add(
+                line,
+                protocol.HINT_PARAM,
+                alloc_label(buf, layout),
+                detail=None if layout is None else full_layout_text(buf, layout),
+                buffer=buf.name,
+            )
 
     def _collect_kernel(self, func: Any, fresh_func: Any):
         tirx = self._tirx
-        grid_dims: List[str] = []
-        threads: Optional[str] = None
+        grid_dims: list[str] = []
+        threads: str | None = None
         line = None
 
         def launch_chain(root_func):
             """Peel SBlockRealize/SBlock to the thread_extent AttrStmt chain."""
             nonlocal line
-            dims: List[Tuple[str, str]] = []
+            dims: list[tuple[str, str]] = []
             body = root_func.body
             for _ in range(16):
                 if body is None:
@@ -308,8 +313,6 @@ class SpanCollector:
         self._add(line, protocol.HINT_KERNEL, label)
 
 
-def collect_hints(func: Any, source_file: str,
-                  fresh_func: Any = None,
-                  index: Optional[StaticIndex] = None) -> List[dict]:
+def collect_hints(func: Any, source_file: str, fresh_func: Any = None, index: StaticIndex | None = None) -> list[dict]:
     """Module-level convenience wrapper."""
     return SpanCollector(source_file, index=index).collect(func, fresh_func=fresh_func)

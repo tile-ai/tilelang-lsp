@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from typing import Dict, Optional
 
 from pygls.lsp.server import LanguageServer
 from lsprotocol.types import (
@@ -77,20 +76,21 @@ def _to_lsp_diagnostics(result: dict, lines: list) -> list:
         # measure in UTF-16 code units — plain len is wrong on both counts.
         text = lines[line].rstrip("\r\n") if line < len(lines) else ""
         start_col = _utf16_len(text) - _utf16_len(text.lstrip())
-        out.append(Diagnostic(
-            range=Range(
-                start=Position(line=line, character=start_col),
-                end=Position(line=line, character=max(_utf16_len(text), start_col + 1)),
-            ),
-            message=d["message"],
-            severity=_SEVERITY.get(d.get("severity"), DiagnosticSeverity.Error),
-            source=d.get("source", "tilelang"),
-        ))
+        out.append(
+            Diagnostic(
+                range=Range(
+                    start=Position(line=line, character=start_col),
+                    end=Position(line=line, character=max(_utf16_len(text), start_col + 1)),
+                ),
+                message=d["message"],
+                severity=_SEVERITY.get(d.get("severity"), DiagnosticSeverity.Error),
+                source=d.get("source", "tilelang"),
+            )
+        )
     return out
 
 
-def _to_lsp_hints(result: dict, lines: list,
-                  visible: Optional[tuple] = None) -> list:
+def _to_lsp_hints(result: dict, lines: list, visible: tuple | None = None) -> list:
     out = []
     for h in result.get("hints", []):
         line = h["line"] - 1
@@ -98,14 +98,15 @@ def _to_lsp_hints(result: dict, lines: list,
             continue
         if visible is not None and not (visible[0] <= line <= visible[1]):
             continue
-        out.append(InlayHint(
-            position=Position(
-                line=line, character=_utf16_len(lines[line].rstrip("\r\n"))),
-            label=h["label"],
-            kind=InlayHintKind.Type,
-            padding_left=True,
-            tooltip=h.get("detail") or None,
-        ))
+        out.append(
+            InlayHint(
+                position=Position(line=line, character=_utf16_len(lines[line].rstrip("\r\n"))),
+                label=h["label"],
+                kind=InlayHintKind.Type,
+                padding_left=True,
+                tooltip=h.get("detail") or None,
+            )
+        )
     return out
 
 
@@ -119,10 +120,10 @@ class TileLangLanguageServer:
         self.server = LanguageServer("tlsp", __version__)
         self.analyzer = AnalyzerClient(target=target)
         self.cache = ResultCache()
-        self.results: Dict[str, dict] = {}  # uri -> latest protocol result
-        self._bg_thread: Optional[threading.Thread] = None
-        self._bg_queue: "queue.Queue" = queue.Queue()
-        self._debounce_timers: Dict[str, threading.Timer] = {}
+        self.results: dict[str, dict] = {}  # uri -> latest protocol result
+        self._bg_thread: threading.Thread | None = None
+        self._bg_queue: queue.Queue = queue.Queue()
+        self._debounce_timers: dict[str, threading.Timer] = {}
         self._register_features()
 
     # -- background full analysis ---------------------------------------------
@@ -169,8 +170,7 @@ class TileLangLanguageServer:
         # the cache key) is available even if the initialize-time warm-up
         # thread has not finished yet.
         self.analyzer.start()
-        cached = self.cache.get(path, text, self.analyzer.target,
-                                (self.analyzer.hello or {}).get("tilelang_version"))
+        cached = self.cache.get(path, text, self.analyzer.target, (self.analyzer.hello or {}).get("tilelang_version"))
         if cached is not None:
             logger.info("cache hit for %s", path)
             self._publish_if_current(uri, text, cached)
@@ -183,14 +183,15 @@ class TileLangLanguageServer:
             result = protocol.make_result(
                 mode=protocol.MODE_STATIC,
                 hints=static.hints,
-                diagnostics=[protocol.make_diagnostic(
-                    1, "tilelang analyzer unavailable (crash/timeout); "
-                       "static hints only. See TileLang LSP output.")],
+                diagnostics=[
+                    protocol.make_diagnostic(
+                        1, "tilelang analyzer unavailable (crash/timeout); static hints only. See TileLang LSP output."
+                    )
+                ],
                 tilelang_version=None,
             )
         else:
-            self.cache.put(path, text, self.analyzer.target, result,
-                           (self.analyzer.hello or {}).get("tilelang_version"))
+            self.cache.put(path, text, self.analyzer.target, result, (self.analyzer.hello or {}).get("tilelang_version"))
         self._publish_if_current(uri, text, result)
 
     # -- publish ----------------------------------------------------------------
@@ -212,11 +213,7 @@ class TileLangLanguageServer:
         self.results[uri] = result
         document = self.server.workspace.get_text_document(uri)
         lines = document.lines if document is not None else []
-        self.server.text_document_publish_diagnostics(
-            PublishDiagnosticsParams(
-                uri=uri, diagnostics=_to_lsp_diagnostics(result, lines)
-            )
-        )
+        self.server.text_document_publish_diagnostics(PublishDiagnosticsParams(uri=uri, diagnostics=_to_lsp_diagnostics(result, lines)))
         try:
             self.server.workspace_inlay_hint_refresh(None)
         except Exception:
@@ -262,11 +259,7 @@ class TileLangLanguageServer:
             if timer is not None:
                 timer.cancel()
             self.results.pop(params.text_document.uri, None)
-            self.server.text_document_publish_diagnostics(
-                PublishDiagnosticsParams(
-                    uri=params.text_document.uri, diagnostics=[]
-                )
-            )
+            self.server.text_document_publish_diagnostics(PublishDiagnosticsParams(uri=params.text_document.uri, diagnostics=[]))
 
         @server.feature(TEXT_DOCUMENT_INLAY_HINT)
         def inlay_hint(params: InlayHintParams) -> list:
@@ -283,16 +276,13 @@ class TileLangLanguageServer:
             return _to_lsp_hints(result, lines, visible)
 
         @server.feature(TEXT_DOCUMENT_HOVER)
-        def hover(params: HoverParams) -> Optional[Hover]:
+        def hover(params: HoverParams) -> Hover | None:
             uri = params.text_document.uri
             result = self.results.get(uri)
             if result is None:
                 return None
             line = params.position.line + 1
-            details = [
-                h["detail"] for h in result.get("hints", [])
-                if h["line"] == line and h.get("detail")
-            ]
+            details = [h["detail"] for h in result.get("hints", []) if h["line"] == line and h.get("detail")]
             if not details:
                 return None
             body = "\n\n---\n\n".join(f"```text\n{d}\n```" for d in details)
@@ -328,8 +318,7 @@ class TileLangLanguageServer:
         # the hints while typing. Full analysis re-publishes everything.
         diagnostics = list(static.diagnostics)
         if previous is not None and previous["meta"]["mode"] != protocol.MODE_STATIC:
-            diagnostics = [d for d in previous.get("diagnostics", [])
-                           if d.get("source") != "tilelang-static"] + diagnostics
+            diagnostics = [d for d in previous.get("diagnostics", []) if d.get("source") != "tilelang-static"] + diagnostics
         result = protocol.make_result(
             mode=protocol.MODE_STATIC,
             hints=static.hints,

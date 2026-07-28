@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from . import protocol
+import contextlib
 
 
-ALLOC_FUNCS: Dict[str, Dict[str, Any]] = {
+ALLOC_FUNCS: dict[str, dict[str, Any]] = {
     "alloc_shared": {"default_scope": "shared.dyn"},
     "alloc_local": {"default_scope": "local"},
     "alloc_fragment": {"default_scope": "local.fragment"},
@@ -56,7 +57,7 @@ ALLOC_FUNCS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def _norm_dtype(dtype: Any) -> Optional[str]:
+def _norm_dtype(dtype: Any) -> str | None:
     """'T.float16' -> 'float16'; keep plain names/strings as-is."""
     if dtype is None:
         return None
@@ -68,8 +69,8 @@ def _norm_dtype(dtype: Any) -> Optional[str]:
 @dataclass
 class BufferInfo:
     shape: Any
-    dtype: Optional[str] = None
-    scope: Optional[str] = None
+    dtype: str | None = None
+    scope: str | None = None
 
     def __eq__(self, other):
         if not isinstance(other, BufferInfo):
@@ -86,20 +87,20 @@ class BufferInfo:
 class StaticIndex:
     """Name -> line index reused by span/param fallbacks."""
 
-    params: Dict[str, int] = field(default_factory=dict)
-    allocs: Dict[str, int] = field(default_factory=dict)
+    params: dict[str, int] = field(default_factory=dict)
+    allocs: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
 class StaticResult:
-    hints: List[dict] = field(default_factory=list)
-    diagnostics: List[dict] = field(default_factory=list)
+    hints: list[dict] = field(default_factory=list)
+    diagnostics: list[dict] = field(default_factory=list)
     index: StaticIndex = field(default_factory=StaticIndex)
 
 
 class ShapeEvaluator(ast.NodeVisitor):
     def __init__(self):
-        self.variables: Dict[str, Any] = {}
+        self.variables: dict[str, Any] = {}
         self.result = StaticResult()
 
     # -- statements ---------------------------------------------------------
@@ -114,14 +115,11 @@ class ShapeEvaluator(ast.NodeVisitor):
                 if isinstance(arg.annotation, ast.Call):
                     func_name = self._get_func_name(arg.annotation.func)
                     if func_name and func_name.split(".")[-1] in ("Tensor", "empty"):
-                        buf_info = self._evaluate_alloc(
-                            arg.annotation, ALLOC_FUNCS[func_name.split(".")[-1]]
-                        )
+                        buf_info = self._evaluate_alloc(arg.annotation, ALLOC_FUNCS[func_name.split(".")[-1]])
                         if buf_info:
                             self.variables[arg.arg] = buf_info
                             self.result.index.params.setdefault(arg.arg, arg.lineno)
-                            self._add_hint(arg.annotation, buf_info.label(),
-                                           protocol.HINT_PARAM, buffer=arg.arg)
+                            self._add_hint(arg.annotation, buf_info.label(), protocol.HINT_PARAM, buffer=arg.arg)
             except Exception:
                 pass
 
@@ -164,11 +162,10 @@ class ShapeEvaluator(ast.NodeVisitor):
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     self.variables[target.id] = evaluated
-                elif isinstance(target, ast.Tuple) and isinstance(evaluated, tuple):
-                    if len(target.elts) == len(evaluated):
-                        for var, val in zip(target.elts, evaluated):
-                            if isinstance(var, ast.Name):
-                                self.variables[var.id] = val
+                elif isinstance(target, ast.Tuple) and isinstance(evaluated, tuple) and len(target.elts) == len(evaluated):
+                    for var, val in zip(target.elts, evaluated):
+                        if isinstance(var, ast.Name):
+                            self.variables[var.id] = val
         except Exception:
             pass
 
@@ -196,9 +193,7 @@ class ShapeEvaluator(ast.NodeVisitor):
                 try:
                     buf_info = self._evaluate_alloc(node, ALLOC_FUNCS[base_name])
                     if buf_info:
-                        kind = (protocol.HINT_PARAM
-                                if base_name in ("Tensor", "empty")
-                                else protocol.HINT_ALLOC)
+                        kind = protocol.HINT_PARAM if base_name in ("Tensor", "empty") else protocol.HINT_ALLOC
                         buffer = self._assigned_name(node)
                         self._add_hint(node, buf_info.label(), kind, buffer=buffer)
                 except Exception:
@@ -262,18 +257,17 @@ class ShapeEvaluator(ast.NodeVisitor):
             right = self._evaluate(node.right)
 
             if isinstance(left, BufferInfo) and isinstance(right, BufferInfo):
-                is_scalar_op = (not left.shape or left.shape == ()) or (
-                    not right.shape or right.shape == ()
-                )
+                is_scalar_op = (not left.shape or left.shape == ()) or (not right.shape or right.shape == ())
                 if not is_scalar_op and not self._check_broadcast(left.shape, right.shape):
-                    msg = (f"shape mismatch {self._fmt_shape(left.shape)} vs "
-                           f"{self._fmt_shape(right.shape)} (broadcast incompatible)")
-                    self.result.diagnostics.append(protocol.make_diagnostic(
-                        line=node.lineno,
-                        message=msg,
-                        severity=protocol.SEVERITY_WARNING,
-                        source="tilelang-static",
-                    ))
+                    msg = f"shape mismatch {self._fmt_shape(left.shape)} vs {self._fmt_shape(right.shape)} (broadcast incompatible)"
+                    self.result.diagnostics.append(
+                        protocol.make_diagnostic(
+                            line=node.lineno,
+                            message=msg,
+                            severity=protocol.SEVERITY_WARNING,
+                            source="tilelang-static",
+                        )
+                    )
                 return left
 
             if isinstance(left, (int, float)) and isinstance(right, (int, float)):
@@ -291,15 +285,19 @@ class ShapeEvaluator(ast.NodeVisitor):
                     return left % right
 
             op_map = {
-                ast.Add: "+", ast.Sub: "-", ast.Mult: "*",
-                ast.Div: "/", ast.FloorDiv: "//", ast.Mod: "%",
+                ast.Add: "+",
+                ast.Sub: "-",
+                ast.Mult: "*",
+                ast.Div: "/",
+                ast.FloorDiv: "//",
+                ast.Mod: "%",
             }
             op_str = op_map.get(type(node.op), "?")
             return f"({left} {op_str} {right})"
 
         raise ValueError("Cannot evaluate")
 
-    def _evaluate_alloc(self, node: ast.Call, config: Dict[str, Any]) -> Optional[BufferInfo]:
+    def _evaluate_alloc(self, node: ast.Call, config: dict[str, Any]) -> BufferInfo | None:
         special_handling = config.get("special_handling")
         shape_val: Any = "?"
         dtype_val = None
@@ -307,10 +305,8 @@ class ShapeEvaluator(ast.NodeVisitor):
 
         if special_handling == "alloc_var":
             if node.args:
-                try:
+                with contextlib.suppress(Exception):
                     dtype_val = self._evaluate(node.args[0])
-                except Exception:
-                    pass
                 shape_val = (1,)
                 if len(node.args) > 1:
                     try:
@@ -324,33 +320,25 @@ class ShapeEvaluator(ast.NodeVisitor):
             shape_val = (1,)
             kind = "wgmma"
             if node.args:
-                try:
+                with contextlib.suppress(Exception):
                     kind = self._evaluate(node.args[0])
-                except Exception:
-                    pass
             else:
                 for kw in node.keywords:
                     if kw.arg == "kind":
-                        try:
+                        with contextlib.suppress(Exception):
                             kind = self._evaluate(kw.value)
-                        except Exception:
-                            pass
                         break
             if kind in ["wgmma", "tcgen05_smem", "tcgen05_instr"]:
                 scope_val = f"local.descriptor.{kind}"
 
             if len(node.args) > 1:
-                try:
+                with contextlib.suppress(Exception):
                     dtype_val = self._evaluate(node.args[1])
-                except Exception:
-                    pass
             if dtype_val is None:
                 for kw in node.keywords:
                     if kw.arg == "dtype":
-                        try:
+                        with contextlib.suppress(Exception):
                             dtype_val = self._evaluate(kw.value)
-                        except Exception:
-                            pass
                         break
         else:
             arg_idx_shape = config.get("arg_idx_shape", 0)
@@ -371,26 +359,20 @@ class ShapeEvaluator(ast.NodeVisitor):
             if fixed_dtype:
                 dtype_val = fixed_dtype
             elif len(node.args) > arg_idx_dtype:
-                try:
+                with contextlib.suppress(Exception):
                     dtype_val = self._evaluate(node.args[arg_idx_dtype])
-                except Exception:
-                    pass
 
             if dtype_val is None and not fixed_dtype:
                 for kw in node.keywords:
                     if kw.arg == "dtype":
-                        try:
+                        with contextlib.suppress(Exception):
                             dtype_val = self._evaluate(kw.value)
-                        except Exception:
-                            pass
                         break
 
         for kw in node.keywords:
             if kw.arg == "scope":
-                try:
+                with contextlib.suppress(Exception):
                     scope_val = self._evaluate(kw.value)
-                except Exception:
-                    pass
                 break
 
         return BufferInfo(shape=shape_val, dtype=_norm_dtype(dtype_val), scope=scope_val)
@@ -405,13 +387,13 @@ class ShapeEvaluator(ast.NodeVisitor):
             if not isinstance(original_shape, (tuple, list)):
                 return value_info
 
-            slice_items: List[ast.AST] = []
+            slice_items: list[ast.AST] = []
             if isinstance(node.slice, ast.Tuple):
                 slice_items = list(node.slice.elts)
             else:
                 slice_items = [node.slice]
 
-            new_shape: List[Any] = []
+            new_shape: list[Any] = []
             current_dim = 0
 
             for item in slice_items:
@@ -423,11 +405,7 @@ class ShapeEvaluator(ast.NodeVisitor):
                         lower = self._evaluate(item.lower) if item.lower else 0
                         upper = self._evaluate(item.upper) if item.upper else dim_size
                         step = self._evaluate(item.step) if item.step else 1
-                        if (
-                            isinstance(lower, (int, float))
-                            and isinstance(upper, (int, float))
-                            and isinstance(step, (int, float))
-                        ):
+                        if isinstance(lower, (int, float)) and isinstance(upper, (int, float)) and isinstance(step, (int, float)):
                             new_shape.append((upper - lower + (step - 1)) // step)
                         else:
                             new_shape.append(f"({upper}-{lower})//{step}")
@@ -441,22 +419,24 @@ class ShapeEvaluator(ast.NodeVisitor):
                 new_shape.append(original_shape[current_dim])
                 current_dim += 1
 
-            return BufferInfo(
-                shape=tuple(new_shape), dtype=value_info.dtype, scope=value_info.scope
-            )
+            return BufferInfo(shape=tuple(new_shape), dtype=value_info.dtype, scope=value_info.scope)
         except Exception:
             return "?"
 
     # -- helpers ------------------------------------------------------------
 
-    def _add_hint(self, node: ast.AST, label: str, kind: str,
-                  buffer: Optional[str] = None):
+    def _add_hint(self, node: ast.AST, label: str, kind: str, buffer: str | None = None):
         line = node.end_lineno if hasattr(node, "end_lineno") else node.lineno
-        self.result.hints.append(protocol.make_hint(
-            line=line, kind=kind, label=label, buffer=buffer,
-        ))
+        self.result.hints.append(
+            protocol.make_hint(
+                line=line,
+                kind=kind,
+                label=label,
+                buffer=buffer,
+            )
+        )
 
-    def _assigned_name(self, node: ast.Call) -> Optional[str]:
+    def _assigned_name(self, node: ast.Call) -> str | None:
         """Name of the variable this call is assigned to (via parent links)."""
         parent = getattr(node, "parent", None)
         if isinstance(parent, ast.Assign) and len(parent.targets) == 1:
@@ -467,7 +447,7 @@ class ShapeEvaluator(ast.NodeVisitor):
             return parent.target.id
         return None
 
-    def _get_func_name(self, node: ast.AST) -> Optional[str]:
+    def _get_func_name(self, node: ast.AST) -> str | None:
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name):
                 return f"{node.value.id}.{node.attr}"
@@ -483,9 +463,8 @@ class ShapeEvaluator(ast.NodeVisitor):
         while len(s2) < len(s1):
             s2.insert(0, 1)
         for d1, d2 in zip(s1, s2):
-            if isinstance(d1, (int, float)) and isinstance(d2, (int, float)):
-                if d1 != d2 and d1 != 1 and d2 != 1:
-                    return False
+            if isinstance(d1, (int, float)) and isinstance(d2, (int, float)) and d1 != d2 and d1 != 1 and d2 != 1:
+                return False
         return True
 
     def _parse_shape_str(self, shape_str: str) -> Any:
@@ -504,7 +483,7 @@ def _attach_parents(tree: ast.AST) -> None:
             child.parent = node  # type: ignore[attr-defined]
 
 
-def parse_with_fallback(source: str) -> Optional[ast.Module]:
+def parse_with_fallback(source: str) -> ast.Module | None:
     """Parse; on SyntaxError comment out the offending line (up to 20 attempts)."""
     try:
         tree = ast.parse(source)

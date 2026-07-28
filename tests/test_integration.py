@@ -13,7 +13,6 @@ On a machine without CUDA, use target "c" (these fixtures are CUDA-free).
 import json
 import os
 import subprocess
-import sys
 import threading
 import unittest
 
@@ -38,9 +37,11 @@ def _child_env(extra=None):
 
 def run_analyzer_once(fixture, target="c", extra_env=None, timeout=180):
     proc = subprocess.run(
-        [TEST_PYTHON, "-m", "tlsp.analyzer", "--once",
-         os.path.join(FIXTURES, fixture), "--target", target],
-        capture_output=True, text=True, env=_child_env(extra_env), timeout=timeout,
+        [TEST_PYTHON, "-m", "tlsp.analyzer", "--once", os.path.join(FIXTURES, fixture), "--target", target],
+        capture_output=True,
+        text=True,
+        env=_child_env(extra_env),
+        timeout=timeout,
     )
     if proc.returncode != 0:
         raise AssertionError(f"analyzer exited {proc.returncode}:\n{proc.stderr[-2000:]}")
@@ -57,21 +58,20 @@ class TestAnalyzerIntegration(unittest.TestCase):
         r = run_analyzer_once("elementwise_add.py")
         self.assertEqual(r["meta"]["mode"], "full")
         self.assertEqual(r["diagnostics"], [])
-        self.assertEqual(hint_lines(r, "param"), [10, 11, 12])
-        self.assertEqual(hint_lines(r, "alloc"), [15, 16, 17, 18])
-        self.assertEqual(hint_lines(r, "op"), [20, 21, 24, 25])
-        self.assertEqual(hint_lines(r, "loop"), [22])
+        self.assertEqual(hint_lines(r, "param"), [11, 12, 13])
+        self.assertEqual(hint_lines(r, "alloc"), [16, 17, 18, 19])
+        self.assertEqual(hint_lines(r, "op"), [21, 22, 25, 26])
+        self.assertEqual(hint_lines(r, "loop"), [23])
         kernel = [h for h in r["hints"] if h["kind"] == "kernel"]
         self.assertEqual(len(kernel), 1)
-        self.assertEqual(kernel[0]["line"], 14)
+        self.assertEqual(kernel[0]["line"], 15)
         # target c lowers launches to serial loops: no SIMT thread binding.
         self.assertEqual(kernel[0]["label"], "⟨kernel⟩")
         c_local = [h for h in r["hints"] if h.get("buffer") == "C_local"]
         self.assertTrue(any("Fragment" in h["label"] for h in c_local))
         self.assertTrue(any(h.get("detail") for h in c_local))
         # CPU lowering yields thread: 1, not the SIMT thread: 128.
-        self.assertTrue(any("thread: 1" in (h.get("detail") or "")
-                            for h in c_local))
+        self.assertTrue(any("thread: 1" in (h.get("detail") or "") for h in c_local))
 
     def test_gemm_partial_layout_failure(self):
         r = run_analyzer_once("gemm_partial.py")
@@ -79,9 +79,9 @@ class TestAnalyzerIntegration(unittest.TestCase):
         errors = [d for d in r["diagnostics"] if d["severity"] == "error"]
         self.assertEqual(len(errors), 1)
         # LayoutInference reports the C_local alloc line via the span marker.
-        self.assertEqual(errors[0]["line"], 18)
+        self.assertEqual(errors[0]["line"], 19)
         self.assertIn("LayoutInference", errors[0]["message"])
-        self.assertEqual(hint_lines(r, "alloc"), [16, 17, 18])
+        self.assertEqual(hint_lines(r, "alloc"), [17, 18, 19])
         loop = [h for h in r["hints"] if h["kind"] == "loop"]
         self.assertEqual(len(loop), 1)
         self.assertIn("stages=3", loop[0]["label"])
@@ -91,9 +91,9 @@ class TestAnalyzerIntegration(unittest.TestCase):
         self.assertEqual(r["meta"]["mode"], "static")
         errors = [d for d in r["diagnostics"] if d["severity"] == "error"]
         self.assertEqual(len(errors), 1)
-        self.assertEqual(errors[0]["line"], 18)
+        self.assertEqual(errors[0]["line"], 19)
         self.assertIn("block_M_typo", errors[0]["message"])
-        self.assertIn(16, hint_lines(r, "alloc"))
+        self.assertIn(17, hint_lines(r, "alloc"))
 
     def test_multi_kernel_directive(self):
         r = run_analyzer_once("multi_kernel.py")
@@ -119,19 +119,21 @@ class TestAnalyzerIntegration(unittest.TestCase):
         )
         proc = subprocess.run(
             [TEST_PYTHON, "-c", code],
-            capture_output=True, text=True, env=_child_env(), timeout=180,
+            capture_output=True,
+            text=True,
+            env=_child_env(),
+            timeout=180,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
 
     def test_tracer_matches_span_lines(self):
         span = run_analyzer_once("elementwise_add.py")
-        tracer = run_analyzer_once(
-            "elementwise_add.py", extra_env={"TILELANG_ENABLE_IR_SPAN": "0"}
-        )
+        tracer = run_analyzer_once("elementwise_add.py", extra_env={"TILELANG_ENABLE_IR_SPAN": "0"})
         self.assertEqual(tracer["meta"]["mode"], "tracer")
         for kind in ("alloc", "op"):
             self.assertEqual(
-                hint_lines(tracer, kind), hint_lines(span, kind),
+                hint_lines(tracer, kind),
+                hint_lines(span, kind),
                 f"{kind} lines differ between tracer and span modes",
             )
 
@@ -144,8 +146,11 @@ class TestAnalyzerIntegration(unittest.TestCase):
 class LSPClient:
     def __init__(self, argv, env):
         self.proc = subprocess.Popen(
-            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, env=env,
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=env,
         )
         self._id = 0
         self.notifications = []
@@ -153,16 +158,13 @@ class LSPClient:
 
     def _send(self, obj):
         body = json.dumps(obj).encode("utf-8")
-        self.proc.stdin.write(
-            f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
-        )
+        self.proc.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body)
         self.proc.stdin.flush()
 
     def request(self, method, params=None, timeout=120):
         self._id += 1
         req_id = self._id
-        self._send({"jsonrpc": "2.0", "id": req_id, "method": method,
-                    "params": params or {}})
+        self._send({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}})
         return self._wait_response(req_id, timeout)
 
     def notify(self, method, params=None):
@@ -223,16 +225,18 @@ class LSPClient:
 @unittest.skipUnless(TEST_PYTHON, "TLSP_TEST_PYTHON not set")
 class TestLSPSession(unittest.TestCase):
     def test_open_save_hover_hints(self):
-        client = LSPClient([TEST_PYTHON, "-m", "tlsp", "--target", "c"],
-                           _child_env())
+        client = LSPClient([TEST_PYTHON, "-m", "tlsp", "--target", "c"], _child_env())
         self.addCleanup(client.close)
 
-        init = client.request("initialize", {
-            "processId": None,
-            "rootUri": None,
-            "capabilities": {},
-            "initializationOptions": {"target": "c"},
-        })
+        init = client.request(
+            "initialize",
+            {
+                "processId": None,
+                "rootUri": None,
+                "capabilities": {},
+                "initializationOptions": {"target": "c"},
+            },
+        )
         self.assertIn("capabilities", init["result"])
         client.notify("initialized", {})
 
@@ -240,17 +244,21 @@ class TestLSPSession(unittest.TestCase):
         uri = "file://" + fixture
         with open(fixture, encoding="utf-8") as f:
             text = f.read()
-        client.notify("textDocument/didOpen", {
-            "textDocument": {"uri": uri, "languageId": "python",
-                             "version": 1, "text": text},
-        })
+        client.notify(
+            "textDocument/didOpen",
+            {
+                "textDocument": {"uri": uri, "languageId": "python", "version": 1, "text": text},
+            },
+        )
 
         # Static hints are available immediately.
-        hints = client.request("textDocument/inlayHint", {
-            "textDocument": {"uri": uri},
-            "range": {"start": {"line": 0, "character": 0},
-                      "end": {"line": 100, "character": 0}},
-        })
+        hints = client.request(
+            "textDocument/inlayHint",
+            {
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 100, "character": 0}},
+            },
+        )
         static_labels = [h["label"] for h in hints["result"]]
         self.assertTrue(any("shared.dyn" in label for label in static_labels))
 
@@ -264,17 +272,19 @@ class TestLSPSession(unittest.TestCase):
         full_labels = []
         deadline = time.time() + 180
         while time.time() < deadline:
-            hints = client.request("textDocument/inlayHint", {
-                "textDocument": {"uri": uri},
-                "range": {"start": {"line": 0, "character": 0},
-                          "end": {"line": 100, "character": 0}},
-            }, timeout=60)
+            hints = client.request(
+                "textDocument/inlayHint",
+                {
+                    "textDocument": {"uri": uri},
+                    "range": {"start": {"line": 0, "character": 0}, "end": {"line": 100, "character": 0}},
+                },
+                timeout=60,
+            )
             full_labels = [h["label"] for h in hints["result"]]
             if any("Fragment" in label for label in full_labels):
                 break
             time.sleep(1.0)
-        self.assertTrue(any("Fragment" in label for label in full_labels),
-                        f"no layout hints after full analysis: {full_labels}")
+        self.assertTrue(any("Fragment" in label for label in full_labels), f"no layout hints after full analysis: {full_labels}")
         # target c lowers to serial loops: thread: 1, not SIMT threads=128.
         self.assertTrue(any("thread: 1" in label for label in full_labels))
 
@@ -285,11 +295,14 @@ class TestLSPSession(unittest.TestCase):
         refresh = client.wait_notification("workspace/inlayHint/refresh", timeout=10)
         self.assertIn("id", refresh)
 
-        # Hover on the C_local alloc line (line 17 -> 0-based 16).
-        hover = client.request("textDocument/hover", {
-            "textDocument": {"uri": uri},
-            "position": {"line": 16, "character": 10},
-        })
+        # Hover on the C_local alloc line (line 18 -> 0-based 17).
+        hover = client.request(
+            "textDocument/hover",
+            {
+                "textDocument": {"uri": uri},
+                "position": {"line": 17, "character": 10},
+            },
+        )
         self.assertIsNotNone(hover["result"])
         self.assertIn("Fragment", hover["result"]["contents"]["value"])
 

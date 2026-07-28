@@ -27,17 +27,14 @@ class TestPositions(unittest.TestCase):
 
     def test_hint_position_excludes_newline(self):
         # pygls document.lines keeps the trailing '\n'.
-        result = protocol.make_result(
-            mode=protocol.MODE_STATIC,
-            hints=[protocol.make_hint(1, "alloc", "x")])
+        result = protocol.make_result(mode=protocol.MODE_STATIC, hints=[protocol.make_hint(1, "alloc", "x")])
         hints = _to_lsp_hints(result, ["abc\n"])
         self.assertEqual(hints[0].position.character, 3)
 
     def test_hint_range_filter(self):
         result = protocol.make_result(
-            mode=protocol.MODE_STATIC,
-            hints=[protocol.make_hint(1, "alloc", "a"),
-                   protocol.make_hint(5, "alloc", "b")])
+            mode=protocol.MODE_STATIC, hints=[protocol.make_hint(1, "alloc", "a"), protocol.make_hint(5, "alloc", "b")]
+        )
         hints = _to_lsp_hints(result, ["x\n"] * 5, visible=(0, 2))
         self.assertEqual([h.label for h in hints], ["a"])
 
@@ -63,9 +60,7 @@ class TestServerGuards(unittest.TestCase):
             timer.cancel()
 
     def _put_doc(self, uri, source, version=1):
-        self.tlsp.server.workspace.put_text_document(
-            TextDocumentItem(uri=uri, language_id="python",
-                             version=version, text=source))
+        self.tlsp.server.workspace.put_text_document(TextDocumentItem(uri=uri, language_id="python", version=version, text=source))
 
     def test_schedule_uses_decoded_fs_path(self):
         uri = "file:///Users/t%20est/%E4%B8%AD%E6%96%87.py"
@@ -85,9 +80,7 @@ class TestServerGuards(unittest.TestCase):
         path = "/stale.py"
         old_text = self.TILE_SRC
         self._put_doc(uri, old_text, version=1)
-        fake = protocol.make_result(
-            mode=protocol.MODE_FULL,
-            hints=[protocol.make_hint(1, "alloc", "x")])
+        fake = protocol.make_result(mode=protocol.MODE_FULL, hints=[protocol.make_hint(1, "alloc", "x")])
         self.tlsp.analyzer.analyze = lambda *a, **k: fake
         published = []
         self.tlsp._publish = lambda u, r: published.append((u, r))

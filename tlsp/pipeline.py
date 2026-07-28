@@ -22,7 +22,7 @@ import os
 import sys
 import time
 import types
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from . import protocol
 from .config import find_kernel_defs, resolve_config
@@ -50,10 +50,10 @@ def _tilelang():
 
 _TLIMPL = None
 _TLIMPL_DONE = False
-_TILELANG_ERR: Optional[str] = None
+_TILELANG_ERR: str | None = None
 
 
-def tilelang_version() -> Optional[str]:
+def tilelang_version() -> str | None:
     tl = _tilelang()
     return getattr(tl, "__version__", "unknown") if tl is not None else None
 
@@ -97,10 +97,10 @@ def load_user_module(path: str):
     return module
 
 
-def _discover_kernels(module) -> Dict[str, Any]:
+def _discover_kernels(module) -> dict[str, Any]:
     from tilelang.jit import JITImpl
 
-    found: Dict[str, Any] = {}
+    found: dict[str, Any] = {}
     for name in dir(module):
         if name.startswith("__"):
             continue
@@ -110,7 +110,7 @@ def _discover_kernels(module) -> Dict[str, Any]:
     return found
 
 
-def _kernel_to_tir(kernel: Any, kwargs: Dict[str, Any]):
+def _kernel_to_tir(kernel: Any, kwargs: dict[str, Any]):
     from tilelang import tvm
     from tilelang.jit import JITImpl
 
@@ -121,9 +121,7 @@ def _kernel_to_tir(kernel: Any, kwargs: Dict[str, Any]):
     if callable(kernel):
         func = kernel(**kwargs)
         if not isinstance(func, tvm.tirx.PrimFunc):
-            raise TypeError(
-                f"factory returned {type(func).__name__}, expected a PrimFunc"
-            )
+            raise TypeError(f"factory returned {type(func).__name__}, expected a PrimFunc")
         return func
     raise TypeError(f"don't know how to turn {type(kernel).__name__} into TIR")
 
@@ -146,8 +144,7 @@ def _l1_diagnostic(exc: BaseException, path: str) -> dict:
         line = last_user_line
     message = f"{type(exc).__name__}: {strip_marker(str(exc)).splitlines()[0] if str(exc) else ''}"
     if isinstance(exc, TypeError) and "required argument" in message:
-        message += (" — provide kernel arguments via a `# <typecheck> name=value, ...` "
-                    "comment or a `<kernel>.compile(...)` call")
+        message += " — provide kernel arguments via a `# <typecheck> name=value, ...` comment or a `<kernel>.compile(...)` call"
     return protocol.make_diagnostic(line=line, message=message[:600])
 
 
@@ -169,20 +166,17 @@ def _l2_diagnostic(exc: BaseException, path: str, stage_name: str) -> dict:
 
 
 def _main_func(module: Any):
-    funcs = [
-        f for f in module.functions.values()
-        if type(f).__name__ == "PrimFunc" or hasattr(f, "buffer_map")
-    ]
+    funcs = [f for f in module.functions.values() if type(f).__name__ == "PrimFunc" or hasattr(f, "buffer_map")]
     return funcs[0] if funcs else None
 
 
-def _collect_layout_maps(module: Any) -> Dict[str, Any]:
+def _collect_layout_maps(module: Any) -> dict[str, Any]:
     """buffer name -> layout, merged over all SBlock layout_map annotations."""
     from tilelang import tvm  # noqa: F401
     from tvm import tirx
     from tvm.tirx.stmt_functor import post_order_visit
 
-    merged: Dict[str, Any] = {}
+    merged: dict[str, Any] = {}
     func = _main_func(module)
     if func is None:
         return merged
@@ -198,11 +192,11 @@ def _collect_layout_maps(module: Any) -> Dict[str, Any]:
     return merged
 
 
-def _run_prologue(mod: Any, target: Any, stages: List[Tuple[str, Any]]):
+def _run_prologue(mod: Any, target: Any, stages: list[tuple[str, Any]]):
     """Run stages one by one; return (last_good_mod, layout_done, failure)."""
     last_good = mod
     layout_done = False
-    failure: Optional[Tuple[str, BaseException]] = None
+    failure: tuple[str, BaseException] | None = None
     with target:
         for name, stage in stages:
             try:
@@ -217,8 +211,8 @@ def _run_prologue(mod: Any, target: Any, stages: List[Tuple[str, Any]]):
 
 def analyze(
     path: str,
-    kernel: Optional[str] = None,
-    kwargs: Optional[Dict[str, Any]] = None,
+    kernel: str | None = None,
+    kwargs: dict[str, Any] | None = None,
     target_str: str = "cuda",
 ) -> dict:
     """Analyze one TileLang source file. Never raises."""
@@ -246,10 +240,7 @@ def analyze(
         kernel_defs = find_kernel_defs(ast.parse(source))
     except SyntaxError:
         kernel_defs = {}
-    symbols = [
-        {"name": name, "kind": "function", "line": line}
-        for name, line in kernel_defs.items()
-    ]
+    symbols = [{"name": name, "kind": "function", "line": line} for name, line in kernel_defs.items()]
 
     def finish(mode, hints, diagnostics, extra_warnings=None):
         return protocol.make_result(
@@ -271,10 +262,12 @@ def analyze(
     tl = _tilelang()
     if tl is None:
         diag = protocol.make_diagnostic(
-            1, f"tilelang is not importable in this environment "
+            1,
+            f"tilelang is not importable in this environment "
             f"({_TILELANG_ERR}); static hints only. Analysis runs under the "
             f"Python interpreter that hosts the tlsp server — point "
-            f"`tilelang.pythonPath` at an environment with tilelang installed.")
+            f"`tilelang.pythonPath` at an environment with tilelang installed.",
+        )
         return finish(protocol.MODE_STATIC, static.hints, [diag])
 
     # -- elaborate: load module + get_tir ------------------------------------
@@ -283,7 +276,7 @@ def analyze(
     from .tracer import CallTracer, hints_from_records
 
     use_spans = span_supported()
-    tracer: Optional[CallTracer] = None
+    tracer: CallTracer | None = None
     module = None
     func = None
     records = []
@@ -292,13 +285,9 @@ def analyze(
         nonlocal module, func, tracer, records
         module = load_user_module(abs_path)
         kernels = _discover_kernels(module)
-        chosen = cfg.kernel if cfg.kernel in kernels else (
-            next(iter(kernels)) if kernels else None
-        )
+        chosen = cfg.kernel if cfg.kernel in kernels else (next(iter(kernels)) if kernels else None)
         if chosen is None:
-            raise LookupError(
-                f"no @tilelang.jit kernel found (wanted {cfg.kernel!r})"
-            )
+            raise LookupError(f"no @tilelang.jit kernel found (wanted {cfg.kernel!r})")
         kernel_obj = kernels[chosen]
         cfg.kernel = chosen
         if with_tracer:
@@ -332,8 +321,7 @@ def analyze(
                 try:
                     elaborate(with_tracer=True)
                 except Exception as exc:
-                    return finish(protocol.MODE_STATIC, static.hints,
-                                  [_l1_diagnostic(exc, abs_path)])
+                    return finish(protocol.MODE_STATIC, static.hints, [_l1_diagnostic(exc, abs_path)])
         except Exception:
             pass
 
@@ -342,8 +330,7 @@ def analyze(
         target = build_target(target_str)
     except Exception as exc:
         # Unknown/misconfigured target: still give span-level hints.
-        hints = (SpanCollector(abs_path, index=scoped_index).collect(func, fresh_func=func)
-                 if use_spans else hints_from_records(records))
+        hints = SpanCollector(abs_path, index=scoped_index).collect(func, fresh_func=func) if use_spans else hints_from_records(records)
         diag = protocol.make_diagnostic(1, f"cannot build target {target_str!r}: {exc}")
         return finish(protocol.MODE_PARTIAL, hints, [diag])
 
@@ -355,8 +342,7 @@ def analyze(
     except Exception as exc:
         # Even pass-list construction can fail on a mismatched build:
         # degrade to span-level hints instead of an internal error.
-        hints = (SpanCollector(abs_path, index=scoped_index).collect(func, fresh_func=func)
-                 if use_spans else hints_from_records(records))
+        hints = SpanCollector(abs_path, index=scoped_index).collect(func, fresh_func=func) if use_spans else hints_from_records(records)
         diag = protocol.make_diagnostic(1, f"cannot build prologue passes: {exc}")
         return finish(protocol.MODE_PARTIAL, hints, [diag])
     last_good, layout_done, failure = _run_prologue(mod, target, stages)
@@ -364,9 +350,7 @@ def analyze(
     # -- collect ---------------------------------------------------------------
     if use_spans:
         final_func = _main_func(last_good) or func
-        hints = SpanCollector(abs_path, index=scoped_index).collect(
-            final_func, fresh_func=func
-        )
+        hints = SpanCollector(abs_path, index=scoped_index).collect(final_func, fresh_func=func)
     else:
         layout_by_name = _collect_layout_maps(last_good) if layout_done else {}
         hints = hints_from_records(records, layout_by_name)
