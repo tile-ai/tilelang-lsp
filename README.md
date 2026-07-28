@@ -1,88 +1,132 @@
 # TileLang LSP (tlsp)
 
-A simple Language Server Protocol (LSP) implementation for TileLang, providing inlay hints for buffer shapes, data types, and memory scopes.
+[中文 README](./README_zh.md)
+
+A Language Server Protocol (LSP) implementation for [TileLang](https://github.com/tile-ai/tilelang),
+providing inlay hints for buffer shapes/dtypes/scopes and inferred layouts, hover details,
+and precise diagnostics.
 
 ## Features
 
-- **Inlay Hints**: Automatically displays information for `T.alloc_shared`, `T.alloc_local`, `T.alloc_fragment`, `T.match_buffer`, and `T.Tensor` calls.
-    - Format: `: shape | dtype | scope`
-    - Example: `: (128, 32) | T.float16 | shared`
-- **Shape Evaluation**: Attempts to statically evaluate shape arguments, resolving variables and basic arithmetic within the function scope.
-- **Dtype & Scope Detection**: Parses data types and memory scopes from arguments or infers them from function names.
+- **Inlay hints** at end of line, five kinds:
+    - `alloc` — `X = T.alloc_*(...)` lines: shape/dtype/scope, plus the inferred
+      `Layout`/`Fragment` once LayoutInference has run
+    - `param` — kernel signature parameters: `⟨(M, K) float16 @global⟩`
+    - `op` — `T.copy` / `T.gemm` / ... lines: short summary of the layouts involved
+    - `loop` — `T.Pipelined` / `T.Parallel` lines: `⟨pipelined, stages=3⟩`, parallel loop layout
+    - `kernel` — `with T.Kernel(...)` line: grid dims and thread count
+- **Hover** on a hint line shows the full layout/fragment text.
+- **Diagnostics** at three precision levels (see below).
+- **Works while your kernel does not compile**: a four-level degradation chain still
+  produces as many hints as possible (see "How it works").
+
+Results are cached in memory (LRU) and on disk under `~/.cache/tilelang_lsp/`
+(override with `TLSP_CACHE_DIR`), keyed by file content hash + target + tilelang version.
 
 ## Installation
 
-1. Ensure you have Python 3.8+ installed.
-2. Install dependencies:
+1. Python 3.8+ with [tilelang](https://github.com/tile-ai/tilelang) importable
+   (for full analysis; without it tlsp still serves static hints).
+2. Install the server package:
    ```bash
-   pip install pygls
+   pip install -e .
    ```
+3. Install the VS Code extension (see below).
 
 ## Usage
 
-### Running the Server
-
-The server communicates via Stdio. You can run it directly:
+### VS Code
 
 ```bash
-python3 server.py
+cd tilelang_lsp_extension
+npm install
+vsce package   # produces tilelang-type-decorator-*.vsix
 ```
 
-### NeoVim Configuration
+Install the `.vsix` in VS Code. The extension launches `python -m tlsp` with the
+configured interpreter. To develop/debug the extension: `npm run compile`, then open
+`src/extension.ts` and press F5.
 
-To use the server with NeoVim, add the following to your lsp config. It would auto start the server and enable it for Python files.
+Settings (all under `tilelang.*`, changes restart the server automatically):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `tilelang.pythonPath` | `"python"` | Python interpreter for the server (must be able to `import tlsp`; tilelang optional but recommended) |
+| `tilelang.target` | `"cuda"` | Compilation target for analysis (`cuda`, `c`, `llvm`, `metal`, `webgpu`). Use `"c"` on machines without CUDA |
+| `tilelang.enableInlayHints` | `true` | Master switch for the server |
+| `tilelang.serverArgs` | `[]` | Extra CLI args appended to `python -m tlsp` |
+
+### Neovim
 
 ```lua
 vim.lsp.config['tlsp'] = {
-cmd = { 'python', 'PATH/TO/tlsp/server.py' },
-filetypes = { 'python' },
-root_markers = {
-  'pyproject.toml',
-  'setup.py',
-  'setup.cfg',
-  'requirements.txt',
-  'Pipfile',
-  '.git',
-},
+  cmd = { 'python', '-m', 'tlsp' },  -- add '--target', 'c' on CUDA-free machines
+  filetypes = { 'python' },
+  root_markers = { 'pyproject.toml', '.git' },
 }
 vim.lsp.config['tlsp'].capabilities = vim.lsp.protocol.make_client_capabilities()
-vim.lsp.enable("tlsp")
+vim.lsp.enable('tlsp')
 ```
 
-<! add a image ----> 
-A demo of the server in action: 
+### The `<typecheck>` directive
 
-![demo](./yq-demo.png)
+tlsp needs concrete kernel arguments to elaborate TIR. It resolves them in this order:
 
-### VS Code Configuration
+1. A comment directive nearest to the kernel definition:
+   ```python
+   # <typecheck> M=1024, N=1024, K=1024, block_M=128, kernel=matmul
+   ```
+   Values are parsed with `ast.literal_eval`; dtype strings like `"float16"` work.
+   `kernel=` selects which kernel to analyze (default: first `@tilelang.jit` found).
+2. Kwargs harvested from `<name>.compile(...)` / direct kernel calls in the file.
+3. Function signature defaults.
 
-A VS Code extension version of tilelang-LSP is provided. 
+Missing required parameters produce a diagnostic asking for a `<typecheck>` directive.
+Symbolic variables declared via `T.const("M, N")` may stay unbound.
 
-To package and release the extension, one can run
-```bash
-cd tilelang_lsp_extension
-npm install
-vsce package
-```
-If there are some confirmations that show up in the console, please type in "yes".
-Once the extension is packaged, an extension program "tilelang-type-decorator-(*version).vsix" will appear in the current folder, and you can install this extension with VSCode.
-You will see the extension as
- ![icon](tilelang_lsp_extension/assets/extension_example.png)
-
-If you are a developer and you wish to debug the extension, you can run
+### CLI debugging
 
 ```bash
-cd tilelang_lsp_extension
-npm install
-npm run compile
+python -m tlsp.analyzer --once path/to/kernel.py --target c
 ```
-and in VS Code, open src/extension.ts and press F5 to enter the debug mode.
-
-A successful installed extension will lead to the following screen display in VS Code
-![example](tilelang_lsp_extension/assets/test.png)
-
-For more information, please check the README.md file in the folder /tilelang_lsp_extension
+prints the full analysis result (schema v2) as a single JSON line.
 
 ## How it works
 
-The server uses Python's `ast` module to parse the code and traverse the syntax tree. It tracks variable assignments within functions to resolve shape variables used in buffer allocations. It also inspects function arguments to extract data type and scope information.
+On every open/save, the analyzer runs a four-level degradation chain and reports its mode:
+
+| Mode | Condition | What you get |
+|---|---|---|
+| `full` | `get_tir` OK + frontend passes up to LayoutInference OK | All hints, alloc hints include inferred layouts |
+| `partial` | `get_tir` OK, some pass failed | Hints collected from the last good IR state + an L2 diagnostic at the exact line (parsed from the `--> file:line:col` marker in the pass error) |
+| `tracer` | IR spans unavailable (old tilelang, or `TILELANG_ENABLE_IR_SPAN=0`) | Hints from a monkeypatch call tracer over `T.*` entries; layouts joined by buffer name when passes succeed |
+| `static` | `get_tir` failed (import error, NameError, half-written code) | Pure-AST hints (shape/dtype/scope) + shape-mismatch warnings + an L1 diagnostic from traceback remapping |
+
+If the analyzer subprocess itself crashes or tilelang is missing entirely, the server
+falls back to static mode with a file-level (L3) diagnostic explaining why.
+
+While you type (before saving), hints come from the same static analysis running
+in-process — so they stay responsive and correct for unparseable intermediate states.
+
+## Development
+
+```bash
+python -m unittest discover tests -v    # unit tests (no tilelang needed)
+```
+
+Integration tests run against a real tilelang checkout and are gated by env vars
+(they skip cleanly without them):
+
+```bash
+TLSP_TEST_PYTHON=/path/to/tilelang/venv/bin/python \
+TLSP_TEST_TILELANG=/path/to/tilelang/repo \
+python -m unittest tests.test_integration -v
+```
+
+## Demo
+
+![demo](./tilelang_lsp_extension/assets/demo.png)
+
+Diagnostics
+
+![partial](./tilelang_lsp_extension/assets/partial.png)
