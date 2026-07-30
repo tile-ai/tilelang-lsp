@@ -1,0 +1,111 @@
+name: CI
+on:
+  pull_request:
+  # Allow to trigger the workflow manually
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHONDEVMODE: "1"
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  lint:
+    name: Pre-commit Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            .pre-commit-config.yaml
+
+      # The eslint pre-commit hook is `language: system` and reuses the
+      # extension's own node_modules, so Node and npm ci are required here.
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tilelang_lsp_extension/package-lock.json
+
+      - name: Install extension dependencies (for the eslint pre-commit hook)
+        run: npm ci --prefix tilelang_lsp_extension
+
+      - name: Pre-commit Lint
+        run: |
+          if ! pipx run pre-commit run --all-files --color=always --show-diff-on-failure; then
+            echo "::error::Pre-commit checks failed. Please run 'pre-commit install' and 'pre-commit run --all-files' locally to see the issues."
+            exit 1
+          fi
+
+  test:
+    name: Unit Tests (Python ${{ matrix.python-version }})
+    needs: [lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install tlsp
+        run: python -m pip install -v .
+
+      # tests/test_integration.py needs a local tilelang (span_dev) build via
+      # TLSP_TEST_PYTHON/TLSP_TEST_TILELANG; without them it skips automatically,
+      # so CI runs the unit suite only.
+      - name: Run unit tests
+        run: python -m unittest discover tests -v
+
+  extension:
+    name: VS Code Extension (compile + lint)
+    needs: [lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tilelang_lsp_extension
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tilelang_lsp_extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile (tsc type check)
+        run: npm run compile
+
+      - name: ESLint
+        run: npm run lint
