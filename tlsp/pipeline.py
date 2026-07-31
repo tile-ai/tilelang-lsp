@@ -18,6 +18,7 @@ fault tolerance" this analyzer is built for.
 from __future__ import annotations
 
 import ast
+import contextlib
 import os
 import sys
 import time
@@ -27,6 +28,7 @@ from typing import Any
 from . import protocol
 from .config import find_kernel_defs, resolve_config
 from .markers import parse_location_marker, strip_marker
+from .race_report import capture_os_stderr, race_diagnostics
 from .static_fallback import analyze_static, index_for_function
 
 
@@ -345,7 +347,24 @@ def analyze(
         hints = SpanCollector(abs_path, index=scoped_index).collect(func, fresh_func=func) if use_spans else hints_from_records(records)
         diag = protocol.make_diagnostic(1, f"cannot build prologue passes: {exc}")
         return finish(protocol.MODE_PARTIAL, hints, [diag])
-    last_good, layout_done, failure = _run_prologue(mod, target, stages)
+
+    def _run_with_race_capture():
+        with capture_os_stderr() as chunks:
+            result = _run_prologue(mod, target, stages)
+        return result, b"".join(chunks)
+
+    try:
+        (last_good, layout_done, failure), stderr_bytes = _run_with_race_capture()
+    except Exception:
+        # fd capture must never kill the analysis; rerun without it.
+        warnings.append("stderr capture failed; data-race diagnostics unavailable")
+        last_good, layout_done, failure = _run_prologue(mod, target, stages)
+        stderr_bytes = b""
+    if stderr_bytes:
+        # Forward verbatim so worker-side debug logs keep the original text.
+        with contextlib.suppress(OSError):
+            os.write(2, stderr_bytes)
+    race_diags = race_diagnostics(stderr_bytes.decode("utf-8", "replace"), abs_path)
 
     # -- collect ---------------------------------------------------------------
     if use_spans:
@@ -359,7 +378,7 @@ def analyze(
         stage_name, exc = failure
         diag = _l2_diagnostic(exc, abs_path, stage_name)
         mode = protocol.MODE_PARTIAL if use_spans else protocol.MODE_TRACER
-        return finish(mode, hints, [diag], extra_warnings=stage_warnings)
+        return finish(mode, hints, [diag] + race_diags, extra_warnings=stage_warnings)
 
     mode = protocol.MODE_FULL if use_spans else protocol.MODE_TRACER
-    return finish(mode, hints, [], extra_warnings=stage_warnings)
+    return finish(mode, hints, race_diags, extra_warnings=stage_warnings)

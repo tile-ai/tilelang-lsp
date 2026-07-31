@@ -58,13 +58,13 @@ class TestAnalyzerIntegration(unittest.TestCase):
         r = run_analyzer_once("elementwise_add.py")
         self.assertEqual(r["meta"]["mode"], "full")
         self.assertEqual(r["diagnostics"], [])
-        self.assertEqual(hint_lines(r, "param"), [11, 12, 13])
-        self.assertEqual(hint_lines(r, "alloc"), [16, 17, 18, 19])
-        self.assertEqual(hint_lines(r, "op"), [21, 22, 25, 26])
-        self.assertEqual(hint_lines(r, "loop"), [23])
+        self.assertEqual(hint_lines(r, "param"), [10, 11, 12])
+        self.assertEqual(hint_lines(r, "alloc"), [15, 16, 17, 18])
+        self.assertEqual(hint_lines(r, "op"), [20, 21, 24, 25])
+        self.assertEqual(hint_lines(r, "loop"), [22])
         kernel = [h for h in r["hints"] if h["kind"] == "kernel"]
         self.assertEqual(len(kernel), 1)
-        self.assertEqual(kernel[0]["line"], 15)
+        self.assertEqual(kernel[0]["line"], 14)
         # target c lowers launches to serial loops: no SIMT thread binding.
         self.assertEqual(kernel[0]["label"], "⟨kernel⟩")
         c_local = [h for h in r["hints"] if h.get("buffer") == "C_local"]
@@ -79,9 +79,9 @@ class TestAnalyzerIntegration(unittest.TestCase):
         errors = [d for d in r["diagnostics"] if d["severity"] == "error"]
         self.assertEqual(len(errors), 1)
         # LayoutInference reports the C_local alloc line via the span marker.
-        self.assertEqual(errors[0]["line"], 19)
+        self.assertEqual(errors[0]["line"], 18)
         self.assertIn("LayoutInference", errors[0]["message"])
-        self.assertEqual(hint_lines(r, "alloc"), [17, 18, 19])
+        self.assertEqual(hint_lines(r, "alloc"), [16, 17, 18])
         loop = [h for h in r["hints"] if h["kind"] == "loop"]
         self.assertEqual(len(loop), 1)
         self.assertIn("stages=3", loop[0]["label"])
@@ -91,9 +91,21 @@ class TestAnalyzerIntegration(unittest.TestCase):
         self.assertEqual(r["meta"]["mode"], "static")
         errors = [d for d in r["diagnostics"] if d["severity"] == "error"]
         self.assertEqual(len(errors), 1)
-        self.assertEqual(errors[0]["line"], 19)
+        self.assertEqual(errors[0]["line"], 18)
         self.assertIn("block_M_typo", errors[0]["message"])
-        self.assertIn(17, hint_lines(r, "alloc"))
+        self.assertIn(16, hint_lines(r, "alloc"))
+
+    def test_data_race_warning(self):
+        r = run_analyzer_once("data_race.py")
+        # A race is a warning, not an error: analysis stays full and hint-free
+        # of regressions, with one diagnostic on the racy store line.
+        self.assertEqual(r["meta"]["mode"], "full")
+        self.assertEqual(hint_lines(r, "param"), [12, 13, 14])
+        warnings_ = [d for d in r["diagnostics"] if d["severity"] == "warning"]
+        self.assertEqual(len(warnings_), 1)
+        self.assertEqual(warnings_[0]["line"], 21)
+        self.assertIn("Data race", warnings_[0]["message"])
+        self.assertIn("C_local", warnings_[0]["message"])
 
     def test_multi_kernel_directive(self):
         r = run_analyzer_once("multi_kernel.py")
@@ -295,12 +307,12 @@ class TestLSPSession(unittest.TestCase):
         refresh = client.wait_notification("workspace/inlayHint/refresh", timeout=10)
         self.assertIn("id", refresh)
 
-        # Hover on the C_local alloc line (line 18 -> 0-based 17).
+        # Hover on the C_local alloc line (line 17 -> 0-based 16).
         hover = client.request(
             "textDocument/hover",
             {
                 "textDocument": {"uri": uri},
-                "position": {"line": 17, "character": 10},
+                "position": {"line": 16, "character": 10},
             },
         )
         self.assertIsNotNone(hover["result"])

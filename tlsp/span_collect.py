@@ -228,7 +228,7 @@ class SpanCollector:
             line = self._buffer_line(buf)
             if line is None:
                 # Parameter buffer has no span: old span_dev builds had an
-                # upstream stamping bug (fixed since — see KNOWN_ISSUES.md).
+                # upstream stamping bug (fixed upstream since).
                 # Fall back to the AST name index.
                 line = self.index.params.get(buf.name)
             layout = self.layout_by_name.get(buf.name)
