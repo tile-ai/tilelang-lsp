@@ -17,7 +17,6 @@ fault tolerance" this analyzer is built for.
 
 from __future__ import annotations
 
-import ast
 import contextlib
 import os
 import sys
@@ -26,7 +25,7 @@ import types
 from typing import Any
 
 from . import protocol
-from .config import find_kernel_defs, resolve_config
+from .config import kernel_symbols, resolve_config
 from .markers import parse_location_marker, strip_marker
 from .race_report import capture_os_stderr, race_diagnostics
 from .static_fallback import analyze_static, index_for_function
@@ -238,11 +237,7 @@ def analyze(
         cfg.kwargs.update(kwargs)
     warnings = list(cfg.warnings)
 
-    try:
-        kernel_defs = find_kernel_defs(ast.parse(source))
-    except SyntaxError:
-        kernel_defs = {}
-    symbols = [{"name": name, "kind": "function", "line": line} for name, line in kernel_defs.items()]
+    symbols = kernel_symbols(source)
 
     def finish(mode, hints, diagnostics, extra_warnings=None):
         return protocol.make_result(

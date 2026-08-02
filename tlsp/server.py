@@ -25,6 +25,7 @@ from lsprotocol.types import (
     TEXT_DOCUMENT_DID_CLOSE,
     TEXT_DOCUMENT_DID_OPEN,
     TEXT_DOCUMENT_DID_SAVE,
+    TEXT_DOCUMENT_DOCUMENT_SYMBOL,
     TEXT_DOCUMENT_HOVER,
     TEXT_DOCUMENT_INLAY_HINT,
     DidChangeTextDocumentParams,
@@ -33,20 +34,25 @@ from lsprotocol.types import (
     DidSaveTextDocumentParams,
     Diagnostic,
     DiagnosticSeverity,
+    DocumentSymbolParams,
     Hover,
     HoverParams,
     InitializeParams,
     InlayHint,
     InlayHintKind,
     InlayHintParams,
+    Location,
     MarkupContent,
     MarkupKind,
     Position,
     PublishDiagnosticsParams,
     Range,
+    SymbolInformation,
+    SymbolKind,
 )
 
 from . import __version__, protocol
+from .config import kernel_symbols
 from .static_fallback import analyze_static
 from .worker import AnalyzerClient, ResultCache
 
@@ -105,6 +111,35 @@ def _to_lsp_hints(result: dict, lines: list, visible: tuple | None = None) -> li
                 kind=InlayHintKind.Type,
                 padding_left=True,
                 tooltip=h.get("detail") or None,
+            )
+        )
+    return out
+
+
+_SYMBOL_KIND = {"function": SymbolKind.Function}
+
+
+def _to_lsp_symbols(result: dict, lines: list, uri: str) -> list:
+    out = []
+    for s in result.get("symbols", []):
+        line = s["line"] - 1
+        if not (0 <= line < len(lines)):
+            continue
+        # Whole-line range, mirroring the diagnostics: span semantics are
+        # line-level, so start at the first non-whitespace character.
+        text = lines[line].rstrip("\r\n")
+        start_col = _utf16_len(text) - _utf16_len(text.lstrip())
+        out.append(
+            SymbolInformation(
+                name=s["name"],
+                kind=_SYMBOL_KIND.get(s.get("kind"), SymbolKind.Function),
+                location=Location(
+                    uri=uri,
+                    range=Range(
+                        start=Position(line=line, character=start_col),
+                        end=Position(line=line, character=max(_utf16_len(text), start_col + 1)),
+                    ),
+                ),
             )
         )
     return out
@@ -288,6 +323,16 @@ class TileLangLanguageServer:
             body = "\n\n---\n\n".join(f"```text\n{d}\n```" for d in details)
             return Hover(contents=MarkupContent(kind=MarkupKind.Markdown, value=body))
 
+        @server.feature(TEXT_DOCUMENT_DOCUMENT_SYMBOL)
+        def document_symbol(params: DocumentSymbolParams) -> list:
+            uri = params.text_document.uri
+            result = self.results.get(uri)
+            if result is None:
+                return []
+            document = server.workspace.get_text_document(uri)
+            lines = document.lines if document is not None else []
+            return _to_lsp_symbols(result, lines, uri)
+
     def _debounce_static(self, uri: str) -> None:
         old = self._debounce_timers.pop(uri, None)
         if old is not None:
@@ -323,6 +368,8 @@ class TileLangLanguageServer:
             mode=protocol.MODE_STATIC,
             hints=static.hints,
             diagnostics=diagnostics,
+            # Keep the outline alive between full-analysis publishes.
+            symbols=kernel_symbols(source),
             tilelang_version=(self.analyzer.hello or {}).get("tilelang_version"),
         )
         self.results[uri] = result

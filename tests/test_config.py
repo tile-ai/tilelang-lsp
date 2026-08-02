@@ -3,6 +3,7 @@ import unittest
 from tlsp.config import (
     find_kernel_defs,
     harvest_call_kwargs,
+    kernel_symbols,
     parse_directives,
     resolve_config,
     signature_defaults,
@@ -42,6 +43,13 @@ class TestKernelDefs(unittest.TestCase):
         src = "import tilelang\n@tilelang.jit\ndef k1(A): ...\n@tilelang.jit(target='c')\ndef k2(A): ...\ndef plain(): ...\n"
         defs = find_kernel_defs(ast.parse(src))
         self.assertEqual(defs, {"k1": 3, "k2": 5})
+
+    def test_kernel_symbols(self):
+        src = "import tilelang\n@tilelang.jit\ndef k1(A): ...\n"
+        self.assertEqual(kernel_symbols(src), [{"name": "k1", "kind": "function", "line": 3}])
+
+    def test_kernel_symbols_tolerates_syntax_error(self):
+        self.assertEqual(kernel_symbols("def k(  # broken mid-edit\n"), [])
 
 
 class TestHarvest(unittest.TestCase):
