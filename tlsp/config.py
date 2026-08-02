@@ -127,6 +127,15 @@ def find_kernel_defs(tree: ast.Module) -> dict[str, int]:
     return found
 
 
+def kernel_symbols(source: str) -> list[dict]:
+    """``documentSymbol`` payload for the ``@tilelang.jit`` kernels in *source*."""
+    try:
+        kernel_defs = find_kernel_defs(ast.parse(source))
+    except SyntaxError:
+        kernel_defs = {}
+    return [{"name": name, "kind": "function", "line": line} for name, line in kernel_defs.items()]
+
+
 def harvest_call_kwargs(tree: ast.Module, kernel_name: str) -> dict[str, Any]:
     """Collect literal kwargs from ``<kernel>.compile(...)`` or ``<kernel>(...)`` calls.
 

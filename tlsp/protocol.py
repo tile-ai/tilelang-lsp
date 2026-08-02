@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, BinaryIO
+from typing import Any
 
 SCHEMA_VERSION = 2
 
@@ -172,25 +172,3 @@ def read_message(stream=None) -> dict | None:
         if not line.strip():
             continue
         return json.loads(line)
-
-
-class BinaryChannel:
-    """NDJSON channel over binary streams (subprocess pipes)."""
-
-    def __init__(self, reader: BinaryIO, writer: BinaryIO):
-        self._reader = reader
-        self._writer = writer
-
-    def write(self, obj: dict) -> None:
-        data = (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
-        self._writer.write(data)
-        self._writer.flush()
-
-    def read(self) -> dict | None:
-        while True:
-            line = self._reader.readline()
-            if line == b"":
-                return None
-            if not line.strip():
-                continue
-            return json.loads(line.decode("utf-8"))

@@ -11,7 +11,7 @@ try:
     from pygls.workspace import Workspace
 
     from tlsp import protocol
-    from tlsp.server import TileLangLanguageServer, _to_lsp_hints, _utf16_len
+    from tlsp.server import TileLangLanguageServer, _to_lsp_hints, _to_lsp_symbols, _utf16_len
 
     HAVE_PYGLS = True
 except ImportError:  # pragma: no cover
@@ -37,6 +37,19 @@ class TestPositions(unittest.TestCase):
         )
         hints = _to_lsp_hints(result, ["x\n"] * 5, visible=(0, 2))
         self.assertEqual([h.label for h in hints], ["a"])
+
+    def test_symbol_range_full_line(self):
+        result = protocol.make_result(mode=protocol.MODE_STATIC, symbols=[{"name": "k", "kind": "function", "line": 2}])
+        symbols = _to_lsp_symbols(result, ["x\n", "  def k():\n"], "file:///s.py")
+        rng = symbols[0].location.range
+        self.assertEqual(symbols[0].name, "k")
+        self.assertEqual(symbols[0].location.uri, "file:///s.py")
+        self.assertEqual((rng.start.line, rng.start.character), (1, 2))  # first non-ws char
+        self.assertEqual(rng.end.character, _utf16_len("  def k():"))
+
+    def test_symbol_out_of_range_skipped(self):
+        result = protocol.make_result(mode=protocol.MODE_STATIC, symbols=[{"name": "k", "kind": "function", "line": 9}])
+        self.assertEqual(_to_lsp_symbols(result, ["x\n"], "file:///s.py"), [])
 
 
 @unittest.skipUnless(HAVE_PYGLS, "pygls not installed")
@@ -102,6 +115,22 @@ class TestServerGuards(unittest.TestCase):
             self.tlsp._debounce_static(uri)
         time.sleep(0.8)
         self.assertEqual(calls, [uri])
+
+    def test_static_refresh_populates_symbols(self):
+        # documentSymbol reads results[uri]["symbols"]; the static refresh
+        # must keep them alive between full-analysis publishes.
+        uri = "file:///sym.py"
+        src = "import tilelang\n\n@tilelang.jit\ndef k():\n    pass\n"
+        self._put_doc(uri, src)
+        self.tlsp.server.text_document_publish_diagnostics = lambda *a, **k: None
+        self.tlsp._static_refresh(uri)
+        self.assertEqual(self.tlsp.results[uri]["symbols"], [{"name": "k", "kind": "function", "line": 4}])
+
+    def test_static_refresh_plain_python_has_no_symbols(self):
+        uri = "file:///plain2.py"
+        self._put_doc(uri, "def f():\n    pass\n")
+        self.tlsp._static_refresh(uri)  # early branch: stores an empty result
+        self.assertEqual(self.tlsp.results[uri]["symbols"], [])
 
 
 if __name__ == "__main__":

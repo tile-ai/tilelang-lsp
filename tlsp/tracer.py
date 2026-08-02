@@ -285,14 +285,3 @@ def hints_from_records(
 
     hints.sort(key=lambda h: (h["line"], h["kind"]))
     return hints
-
-
-def layout_map_by_name(layout_maps: list[Any]) -> dict[str, Any]:
-    """Merge per-block layout_map annotations into a name -> layout dict."""
-    merged: dict[str, Any] = {}
-    for layout_map in layout_maps:
-        if not layout_map:
-            continue
-        for buf, layout in layout_map.items():
-            merged.setdefault(getattr(buf, "name", str(buf)), layout)
-    return merged

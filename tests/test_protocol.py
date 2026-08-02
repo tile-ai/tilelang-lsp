@@ -19,14 +19,6 @@ class TestNdjsonProtocol(unittest.TestCase):
         buf = io.StringIO("\n\n")
         self.assertIsNone(protocol.read_message(stream=buf))
 
-    def test_binary_channel(self):
-        read_buf = io.BytesIO(b'{"id": 7, "result": {"ok": true}}\n')
-        write_buf = io.BytesIO()
-        ch = protocol.BinaryChannel(read_buf, write_buf)
-        ch.write({"method": "shutdown"})
-        self.assertEqual(write_buf.getvalue(), b'{"method": "shutdown"}\n')
-        self.assertEqual(ch.read(), {"id": 7, "result": {"ok": True}})
-
 
 class TestAnalyzerClient(unittest.TestCase):
     """Round-trip against the real analyzer subprocess.
