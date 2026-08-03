@@ -62,6 +62,18 @@ npm ci && npm run compile && npm run lint
   serial loops, so expect `thread: 1` in fragment details, **not** the SIMT
   `threads=128`. Do not pass `lower_thread_binding=True` for `c`/`llvm` targets in
   `prologue.py` — that was a real bug.
+- Analysis target comes from code, not an editor setting: `# <typecheck> target=...`
+  beats `target=` at a `<kernel>.compile(...)` call site, which beats a literal
+  `@tilelang.jit(target=...)` decorator, which beats the server `--target` default
+  (cuda). Resolution lives in `config.resolve_config` (`_directive_target` merges
+  target across applicable directives; kwargs stay nearest-directive-only); the
+  `tilelang.target` VS Code setting was removed.
+- Upstream tilelang keeps the data-race checker opt-in: `VerifyParallelLoop` only
+  enters the prologue when `TILELANG_ENABLE_DATA_RACE_CHECK=1` (or pass config
+  overrides). The VS Code extension turns it on by default via the
+  `tilelang.serverEnv` setting (users can remove that entry to opt out); other
+  clients must set the variable in the server process env themselves.
+  `tests.test_integration.test_data_race_warning` pins the env var itself.
 - The analyzer must never trust timestamp-based `.pyc` caches for user files:
   `pipeline.py` reads and compiles the source text itself.
 - Background analysis results are bound to a document version before publishing;

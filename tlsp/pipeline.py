@@ -235,6 +235,9 @@ def analyze(
         cfg.kernel = kernel
     if kwargs:
         cfg.kwargs.update(kwargs)
+    if cfg.target:
+        # Code wins over the server default (resolution: config.resolve_config).
+        target_str = cfg.target
     warnings = list(cfg.warnings)
 
     symbols = kernel_symbols(source)

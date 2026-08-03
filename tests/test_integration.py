@@ -96,7 +96,9 @@ class TestAnalyzerIntegration(unittest.TestCase):
         self.assertIn(16, hint_lines(r, "alloc"))
 
     def test_data_race_warning(self):
-        r = run_analyzer_once("data_race.py")
+        # Upstream keeps the race checker opt-in (TILELANG_ENABLE_DATA_RACE_CHECK);
+        # pin it so the test does not depend on the caller's environment.
+        r = run_analyzer_once("data_race.py", extra_env={"TILELANG_ENABLE_DATA_RACE_CHECK": "1"})
         # A race is a warning, not an error: analysis stays full and hint-free
         # of regressions, with one diagnostic on the racy store line.
         self.assertEqual(r["meta"]["mode"], "full")
@@ -116,6 +118,17 @@ class TestAnalyzerIntegration(unittest.TestCase):
         self.assertEqual(kernel[0]["line"], 24)
         # target c: serial-loop lowering, no SIMT threads in the label.
         self.assertEqual(kernel[0]["label"], "⟨kernel⟩")
+
+    def test_code_target_overrides_cli_default(self):
+        # The fixture pins target="c" in the @tilelang.jit decorator, so the
+        # analysis must lower for c even when the CLI default is cuda.
+        r = run_analyzer_once("jit_target.py", target="cuda")
+        self.assertEqual(r["meta"]["mode"], "full")
+        kernel = [h for h in r["hints"] if h["kind"] == "kernel"]
+        self.assertEqual(len(kernel), 1)
+        self.assertEqual(kernel[0]["label"], "⟨kernel⟩")
+        c_local = [h for h in r["hints"] if h.get("buffer") == "C_local"]
+        self.assertTrue(any("thread: 1" in (h.get("detail") or "") for h in c_local))
 
     def test_prologue_survives_missing_pass_attr(self):
         # An installed build lagging the source tree (pass wrapper missing
@@ -246,7 +259,6 @@ class TestLSPSession(unittest.TestCase):
                 "processId": None,
                 "rootUri": None,
                 "capabilities": {},
-                "initializationOptions": {"target": "c"},
             },
         )
         self.assertIn("capabilities", init["result"])

@@ -262,12 +262,6 @@ class TileLangLanguageServer:
         @server.feature(INITIALIZE)
         def initialize(params: InitializeParams) -> None:
             # pygls computes server capabilities after this handler runs.
-            opts = params.initialization_options
-            if isinstance(opts, dict):
-                target = opts.get("target")
-                if target:
-                    logger.info("target overridden by client: %s", target)
-                    self.analyzer.target = str(target)
             # Warm up the analyzer: faster first analysis, and the disk-cache
             # key carries the tilelang version from the first file on.
             threading.Thread(target=self.analyzer.start, daemon=True).start()

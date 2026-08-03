@@ -36,19 +36,17 @@
           "items": {
             "type": "string"
           },
-          "description": "Additional arguments to pass to the TileLang LSP server."
+          "description": "Additional arguments to pass to the TileLang LSP server (e.g. --target c to set the default analysis target)."
         },
-        "tilelang.target": {
-          "type": "string",
-          "default": "cuda",
-          "enum": [
-            "cuda",
-            "c",
-            "llvm",
-            "metal",
-            "webgpu"
-          ],
-          "description": "Compilation target used when analyzing kernels (LayoutInference runs up to this target). Use 'c' on machines without a GPU toolchain."
+        "tilelang.serverEnv": {
+          "type": "object",
+          "default": {
+            "TILELANG_ENABLE_DATA_RACE_CHECK": "1"
+          },
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables for the TLSP server process, merged over the inherited environment (the analyzer subprocess inherits them). The default enables TileLang data-race diagnostics; remove that entry to opt out. Custom entries replace the whole default object."
         }
       }
     },

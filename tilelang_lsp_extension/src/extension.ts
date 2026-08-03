@@ -43,7 +43,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 e.affectsConfiguration('tilelang.pythonPath') ||
                 e.affectsConfiguration('tilelang.enableInlayHints') ||
                 e.affectsConfiguration('tilelang.serverArgs') ||
-                e.affectsConfiguration('tilelang.target')
+                e.affectsConfiguration('tilelang.serverEnv')
             ) {
                 await restartClient(context);
             }
@@ -111,7 +111,7 @@ async function startClient(context: vscode.ExtensionContext) {
     const configuredPython = config.get<string>('pythonPath', 'python');
     const pythonPath = resolvePythonPath(configuredPython);
     const extraArgs = config.get<string[]>('serverArgs', []);
-    const target = config.get<string>('target', 'cuda');
+    const serverEnv = config.get<Record<string, string>>('serverEnv', {});
 
     // Build PYTHONPATH to include the repo's tlsp module
     const serverModuleRoot = getServerModulePath(context);
@@ -152,6 +152,7 @@ async function startClient(context: vscode.ExtensionContext) {
         options: {
             env: {
                 ...process.env,
+                ...serverEnv,
                 ...(serverModuleRoot ? { PYTHONPATH: envPythonPath } : {}),
             },
         },
@@ -163,7 +164,6 @@ async function startClient(context: vscode.ExtensionContext) {
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.py'),
         },
-        initializationOptions: { target },
     };
 
     client = new LanguageClient(

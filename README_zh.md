@@ -48,9 +48,9 @@ vsce package   # 生成 tilelang-type-decorator-*.vsix
 | 配置项 | 默认值 | 含义 |
 |---|---|---|
 | `tilelang.pythonPath` | `"python"` | 运行 server 的 Python 解释器（须能 `import tlsp`；能 import tilelang 更佳） |
-| `tilelang.target` | `"cuda"` | 分析用的编译 target（`cuda`、`c`、`llvm`、`metal`、`webgpu`）。无 CUDA 的机器用 `"c"` |
 | `tilelang.enableInlayHints` | `true` | server 总开关 |
-| `tilelang.serverArgs` | `[]` | 追加到 `python -m tlsp` 的额外 CLI 参数 |
+| `tilelang.serverArgs` | `[]` | 追加到 `python -m tlsp` 的额外 CLI 参数（如 `["--target", "c"]` 可改默认分析 target) |
+| `tilelang.serverEnv` | `{"TILELANG_ENABLE_DATA_RACE_CHECK": "1"}` | 传给 server 进程的环境变量（analyzer 子进程继承）。默认开启数据竞争诊断；删除该键即关闭。注意自定义时整体替换默认对象——仍要 race 诊断需保留该键。`PYTHONPATH` 由扩展托管 |
 
 ### Neovim
 
@@ -64,6 +64,9 @@ vim.lsp.config['tlsp'].capabilities = vim.lsp.protocol.make_client_capabilities(
 vim.lsp.enable('tlsp')
 ```
 
+在 VS Code 之外使用时，在 server 进程环境中设 `TILELANG_ENABLE_DATA_RACE_CHECK=1`
+可开启数据竞争诊断（VS Code 扩展通过 `tilelang.serverEnv` 默认开启）。
+
 ### `<typecheck>` 指令
 
 tlsp 需要具体的 kernel 实参才能展开 TIR。按以下优先级解析：
@@ -76,6 +79,11 @@ tlsp 需要具体的 kernel 实参才能展开 TIR。按以下优先级解析：
    `kernel=` 用于选择分析哪个 kernel（缺省取文件内第一个 `@tilelang.jit`）。
 2. 从文件中 `<name>.compile(...)` / 对 kernel 的直接调用收割 kwargs。
 3. 函数签名默认值。
+
+分析 target 取自代码：`# <typecheck> target=c` 优先于
+`<kernel>.compile(...)` 调用点的 `target=`，调用点又优先于
+`@tilelang.jit(target=...)` 装饰器字面量，装饰器再优先于 server 默认值
+（`--target`，未设置时为 `cuda`）。
 
 缺少必需参数时会产生诊断，提示补 `<typecheck>` 指令。
 `T.const("M, N")` 声明的符号变量可以不绑定（保持符号即可）。
