@@ -1,10 +1,15 @@
-"""Resolve which kernel to analyze and with which kwargs, from source text only.
+"""Resolve which kernel to analyze, with which kwargs and target, from source text only.
 
-Priority (per key, highest first):
+Kwargs priority (per key, highest first):
 
 1. ``# <typecheck> M=1024, N=1024, kernel=matmul`` comment directives
 2. kwargs harvested from ``<kernel>.compile(...)`` / direct ``<kernel>(...)`` calls
 3. function signature defaults
+
+Analysis target priority: a ``# <typecheck> target=c`` directive beats
+``target=`` at a ``<kernel>.compile(...)`` call site, which beats a literal
+``@tilelang.jit(target=...)`` decorator; all are optional and fall back to
+the server's default target.
 
 ``T.const("M, N")`` symbols may stay unbound; the analyzer reports a precise
 diagnostic when required params are missing.
@@ -26,6 +31,7 @@ class Directive:
     lineno: int
     kernel: str | None
     kwargs: dict[str, Any]
+    target: str | None = None
 
 
 @dataclass
@@ -34,6 +40,7 @@ class KernelConfig:
     kwargs: dict[str, Any] = field(default_factory=dict)
     origin: str = "none"  # "directive" | "call" | "defaults" | "none"
     warnings: list[str] = field(default_factory=list)
+    target: str | None = None  # resolved analysis target (directive > call site > decorator); None = server default
 
 
 def _literal(node: ast.AST) -> tuple[bool, Any]:
@@ -58,21 +65,26 @@ def _literal(node: ast.AST) -> tuple[bool, Any]:
     return False, None
 
 
-def _parse_kwarg_text(text: str) -> tuple[dict[str, Any], str | None, list[str]]:
-    """Parse ``M=1024, kernel=matmul`` style text into (kwargs, kernel, warnings)."""
+def _parse_kwarg_text(text: str) -> tuple[dict[str, Any], str | None, str | None, list[str]]:
+    """Parse ``M=1024, kernel=matmul, target=c`` style text.
+
+    Returns (kwargs, kernel, target, warnings): ``kernel``/``target`` steer the
+    analysis itself, so they are pulled out instead of forwarded to the kernel.
+    """
     kwargs: dict[str, Any] = {}
     kernel: str | None = None
+    target: str | None = None
     warnings: list[str] = []
     text = text.strip()
     if not text:
-        return kwargs, kernel, warnings
+        return kwargs, kernel, target, warnings
     try:
         call = ast.parse(f"__f({text})", mode="eval").body
     except SyntaxError:
         warnings.append(f"cannot parse <typecheck> directive: {text!r}")
-        return kwargs, kernel, warnings
+        return kwargs, kernel, target, warnings
     if not isinstance(call, ast.Call):
-        return kwargs, kernel, warnings
+        return kwargs, kernel, target, warnings
     for kw in call.keywords:
         if kw.arg is None:
             continue
@@ -82,9 +94,14 @@ def _parse_kwarg_text(text: str) -> tuple[dict[str, Any], str | None, list[str]]
             continue
         if kw.arg == "kernel":
             kernel = str(val)
+        elif kw.arg == "target":
+            if isinstance(val, str):
+                target = val
+            else:
+                warnings.append(f"ignored non-string target {val!r} in directive")
         else:
             kwargs[kw.arg] = val
-    return kwargs, kernel, warnings
+    return kwargs, kernel, target, warnings
 
 
 def parse_directives(source: str) -> tuple[list[Directive], list[str]]:
@@ -99,9 +116,9 @@ def parse_directives(source: str) -> tuple[list[Directive], list[str]]:
             text = tok.string.lstrip("#").strip()
             if not text.startswith(DIRECTIVE_MARK):
                 continue
-            kwargs, kernel, warns = _parse_kwarg_text(text[len(DIRECTIVE_MARK) :])
+            kwargs, kernel, target, warns = _parse_kwarg_text(text[len(DIRECTIVE_MARK) :])
             warnings.extend(warns)
-            directives.append(Directive(lineno=tok.start[0], kernel=kernel, kwargs=kwargs))
+            directives.append(Directive(lineno=tok.start[0], kernel=kernel, kwargs=kwargs, target=target))
     except tokenize.TokenError:
         # Unterminated constructs mid-editing; return what we have.
         pass
@@ -134,6 +151,23 @@ def kernel_symbols(source: str) -> list[dict]:
     except SyntaxError:
         kernel_defs = {}
     return [{"name": name, "kind": "function", "line": line} for name, line in kernel_defs.items()]
+
+
+def decorator_target(tree: ast.Module, kernel_name: str) -> str | None:
+    """Literal ``target=`` from the kernel's ``@tilelang.jit(...)`` decorator, if any."""
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name != kernel_name:
+            continue
+        for dec in node.decorator_list:
+            if not isinstance(dec, ast.Call) or not _is_jit_decorator(dec.func):
+                continue
+            for kw in dec.keywords:
+                if kw.arg == "target":
+                    ok, val = _literal(kw.value)
+                    if ok and isinstance(val, str):
+                        return val
+        return None
+    return None
 
 
 def harvest_call_kwargs(tree: ast.Module, kernel_name: str) -> dict[str, Any]:
@@ -206,6 +240,23 @@ def _choose_directive(directives: list[Directive], kernel: str, def_line: int | 
     return min(applicable, key=lambda d: abs(d.lineno - (def_line or d.lineno)))
 
 
+def _directive_target(directives: list[Directive], kernel: str | None) -> str | None:
+    """Last applicable directive carrying ``target=`` wins.
+
+    Unlike kwargs (nearest directive only), target is merged across every
+    applicable directive, so a bare ``# <typecheck> target=c`` line is not
+    shadowed by a nearer target-less one. The mid-edit SyntaxError path uses
+    the same rule.
+    """
+    target = None
+    for d in directives:
+        if kernel is not None and d.kernel is not None and d.kernel != kernel:
+            continue
+        if d.target:
+            target = d.target
+    return target
+
+
 def resolve_config(source: str) -> KernelConfig:
     """Resolve (kernel, kwargs) for a TileLang source file."""
     warnings: list[str] = []
@@ -223,7 +274,13 @@ def resolve_config(source: str) -> KernelConfig:
         for d in directives:
             if kernel is None or d.kernel in (None, kernel):
                 merged.update(d.kwargs)
-        return KernelConfig(kernel=kernel, kwargs=merged, origin="directive" if merged or kernel else "none", warnings=warns)
+        return KernelConfig(
+            kernel=kernel,
+            kwargs=merged,
+            origin="directive" if merged or kernel else "none",
+            warnings=warns,
+            target=_directive_target(directives, kernel),
+        )
 
     kernel_defs = find_kernel_defs(tree)
     directives, warns = parse_directives(source)
@@ -241,6 +298,8 @@ def resolve_config(source: str) -> KernelConfig:
         origin = "defaults"
 
     harvested = harvest_call_kwargs(tree, kernel)
+    # target= steers the analysis; it is not a kernel kwarg (get_tir would choke).
+    call_target = harvested.pop("target", None)
     if harvested:
         kwargs.update(harvested)
         origin = "call"
@@ -250,4 +309,9 @@ def resolve_config(source: str) -> KernelConfig:
         kwargs.update(directive.kwargs)
         origin = "directive"
 
-    return KernelConfig(kernel=kernel, kwargs=kwargs, origin=origin, warnings=warnings)
+    target = _directive_target(directives, kernel)
+    if target is None and isinstance(call_target, str):
+        target = call_target
+    if target is None:
+        target = decorator_target(tree, kernel)
+    return KernelConfig(kernel=kernel, kwargs=kwargs, origin=origin, warnings=warnings, target=target)

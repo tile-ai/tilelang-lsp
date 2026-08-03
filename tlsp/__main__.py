@@ -10,7 +10,8 @@ def main() -> None:
     parser.add_argument(
         "--target",
         default=None,
-        help="default compilation target for analysis (cuda, c, llvm, metal, webgpu); the editor configuration can override this",
+        help="default compilation target for analysis (cuda, c, llvm, metal, webgpu); overridden by "
+        "@tilelang.jit(target=...) or a '# <typecheck> target=...' directive in the source",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args, _unknown = parser.parse_known_args()

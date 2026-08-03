@@ -41,16 +41,19 @@ Settings (under `tilelang.*`; changing any of them restarts the server):
 - `tilelang.pythonPath` (default `"python"`): interpreter for the server. It must be
   able to `import tlsp` (install with `pip install -e .` in the tilelang-lsp repo);
   a tilelang-enabled interpreter unlocks full analysis.
-- `tilelang.target` (default `"cuda"`): analysis target (`cuda`/`c`/`llvm`/`metal`/`webgpu`).
-  Use `"c"` on machines without CUDA.
 - `tilelang.enableInlayHints` (default `true`): master switch.
-- `tilelang.serverArgs` (default `[]`): extra args appended to `python -m tlsp`.
+- `tilelang.serverArgs` (default `[]`): extra args appended to `python -m tlsp`
+  (e.g. `["--target", "c"]` to change the default analysis target).
+- `tilelang.serverEnv` (default `{"TILELANG_ENABLE_DATA_RACE_CHECK": "1"}`): extra
+  environment variables for the server process, inherited by the analyzer
+  subprocess. The default enables data-race diagnostics; remove that entry to opt out.
+  Custom entries replace the whole default object — keep the race-check key if you
+  still want those diagnostics. `PYTHONPATH` is managed by the extension.
 
 ## Working mechanism
 
 The extension is a thin LSP client: it resolves a Python interpreter (configured →
-ms-python selection → `python`/`python3`), spawns `python -m tlsp` over stdio, and
-forwards the analysis target via `initializationOptions`.
+ms-python selection → `python`/`python3`) and spawns `python -m tlsp` over stdio.
 
 All analysis happens in the server (`tlsp` package): while you type it answers from
 pure-AST static analysis; on save it dispatches to a resident analyzer subprocess that

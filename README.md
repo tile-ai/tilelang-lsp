@@ -52,9 +52,9 @@ Settings (all under `tilelang.*`, changes restart the server automatically):
 | Setting | Default | Meaning |
 |---|---|---|
 | `tilelang.pythonPath` | `"python"` | Python interpreter for the server (must be able to `import tlsp`; tilelang optional but recommended) |
-| `tilelang.target` | `"cuda"` | Compilation target for analysis (`cuda`, `c`, `llvm`, `metal`, `webgpu`). Use `"c"` on machines without CUDA |
 | `tilelang.enableInlayHints` | `true` | Master switch for the server |
-| `tilelang.serverArgs` | `[]` | Extra CLI args appended to `python -m tlsp` |
+| `tilelang.serverArgs` | `[]` | Extra CLI args appended to `python -m tlsp` (e.g. `["--target", "c"]` to change the default analysis target) |
+| `tilelang.serverEnv` | `{"TILELANG_ENABLE_DATA_RACE_CHECK": "1"}` | Extra environment variables for the server process (the analyzer subprocess inherits them). Default enables data-race diagnostics; remove that entry to opt out. Custom entries replace the whole default object — keep the race-check key if you still want those diagnostics. `PYTHONPATH` is managed by the extension |
 
 ### Neovim
 
@@ -68,6 +68,10 @@ vim.lsp.config['tlsp'].capabilities = vim.lsp.protocol.make_client_capabilities(
 vim.lsp.enable('tlsp')
 ```
 
+Outside VS Code, set `TILELANG_ENABLE_DATA_RACE_CHECK=1` in the server process
+environment to enable data-race diagnostics (the VS Code extension enables it by
+default via `tilelang.serverEnv`).
+
 ### The `<typecheck>` directive
 
 tlsp needs concrete kernel arguments to elaborate TIR. It resolves them in this order:
@@ -80,6 +84,11 @@ tlsp needs concrete kernel arguments to elaborate TIR. It resolves them in this 
    `kernel=` selects which kernel to analyze (default: first `@tilelang.jit` found).
 2. Kwargs harvested from `<name>.compile(...)` / direct kernel calls in the file.
 3. Function signature defaults.
+
+The analysis target comes from the code:
+`# <typecheck> target=c` wins over `target=` at a `<kernel>.compile(...)` call
+site, which wins over a literal `@tilelang.jit(target=...)` decorator, which in
+turn wins over the server default (`--target`, `cuda` if unset).
 
 Missing required parameters produce a diagnostic asking for a `<typecheck>` directive.
 Symbolic variables declared via `T.const("M, N")` may stay unbound.
