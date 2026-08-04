@@ -7,6 +7,9 @@ Gated by environment variables (tests skip cleanly without them):
     TLSP_TEST_TILELANG  path of the tilelang repo, prepended to PYTHONPATH
                         (needed when the venv has no tilelang .pth/install)
 
+    A plain ``pip install tilelang==0.1.13`` environment works: set only
+    TLSP_TEST_PYTHON and leave TLSP_TEST_TILELANG unset (this is what CI does).
+
 On a machine without CUDA, use target "c" (these fixtures are CUDA-free).
 """
 

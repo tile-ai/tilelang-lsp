@@ -32,7 +32,8 @@ instead of going dark. `tilelang_lsp_extension/` is the VS Code client extension
 # Unit tests (needs pygls installed; integration cases skip without env vars)
 python -m unittest discover tests -v
 
-# Integration tests (require a local tilelang span_dev checkout)
+# Integration tests (need a tilelang-capable python: PyPI tilelang>=0.1.13 or a
+# local build; TLSP_TEST_TILELANG only when using a source checkout)
 TLSP_TEST_PYTHON=/path/to/venv/bin/python TLSP_TEST_TILELANG=/path/to/tilelang \
   python -m unittest tests.test_integration -v
 
@@ -80,7 +81,7 @@ npm ci && npm run compile && npm run lint
   keep that invariant when touching `server.py`.
 - Lint gate: `.pre-commit-config.yaml` (ruff, codespell, pymarkdown, plus an eslint
   `language: system` hook that reuses the extension's `node_modules`). CI
-  (`.github/workflows/ci.yml`) runs pre-commit, the unit suite on Python 3.12,
-  and the extension build; integration tests are local-only.
+  (`.github/workflows/ci.yml`) runs pre-commit, the test suite on Python 3.12
+  (unit + integration against PyPI `tilelang==0.1.13`), and the extension build.
 - Never commit `node_modules/`, `out/`, `*.vsix`, `__pycache__/` (see `.gitignore`).
 - Do not run `git commit`/`git push` unless the user explicitly asks.

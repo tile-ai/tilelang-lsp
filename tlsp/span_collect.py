@@ -1,10 +1,11 @@
-"""Span-based hint collection — the primary analysis path (span_dev required).
+"""Span-based hint collection — the primary analysis path (tilelang >= 0.1.13).
 
-Walks a PrimFunc at any lowering stage and emits hint dicts located purely via
-IR spans (`tilelang.ir.get_stmt_span` / `get_buffer_span`). Works on the fresh
-`get_tir` output (no layouts) as well as on the post-LayoutInference module
-(with `layout_map` annotations), which is what powers the partial mode when a
-pass fails mid-prologue.
+Span injection is merged upstream (tilelang main, PyPI 0.1.13). Walks a PrimFunc
+at any lowering stage and emits hint dicts located purely via IR spans
+(`tilelang.ir.get_stmt_span` / `get_buffer_span`). Works on the fresh `get_tir`
+output (no layouts) as well as on the post-LayoutInference module (with
+`layout_map` annotations), which is what powers the partial mode when a pass
+fails mid-prologue.
 
 Only locations inside the current source file are annotated: statements inside
 macros carry the macro definition's span, which may live in another file.
