@@ -54,7 +54,7 @@ jobs:
           fi
 
   test:
-    name: Unit Tests (Python ${{ matrix.python-version }})
+    name: Tests (Python ${{ matrix.python-version }})
     needs: [lint]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -76,11 +76,20 @@ jobs:
       - name: Install tlsp
         run: python -m pip install -v .
 
-      # tests/test_integration.py needs a local tilelang (span_dev) build via
-      # TLSP_TEST_PYTHON/TLSP_TEST_TILELANG; without them it skips automatically,
-      # so CI runs the unit suite only.
-      - name: Run unit tests
+      # torch from the CPU index: the default PyPI torch wheel on Linux pulls
+      # ~2.5GB of nvidia CUDA packages the tests never use.
+      - name: Install tilelang
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install tilelang==0.1.13
+
+      # Integration tests run against the PyPI tilelang wheel (0.1.13 ships the
+      # span injection + race diagnostics); TLSP_TEST_TILELANG stays unset so
+      # tilelang comes from site-packages. All fixtures are CUDA-free (target "c").
+      - name: Run tests
         run: python -m unittest discover tests -v
+        env:
+          TLSP_TEST_PYTHON: python
 
   extension:
     name: VS Code Extension (compile + lint)

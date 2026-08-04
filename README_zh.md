@@ -118,12 +118,13 @@ python -m tlsp.analyzer --once path/to/kernel.py --target c
 python -m unittest discover tests -v    # 单元测试（无需 tilelang）
 ```
 
-集成测试需要真实的 tilelang 环境，由环境变量门控（未设置时自动 skip）：
+集成测试需要一个能 import tilelang 的 python——直接 `pip install tilelang>=0.1.13`
+的环境即可（未设置环境变量时自动 skip）：
 
 ```bash
-TLSP_TEST_PYTHON=/path/to/tilelang/venv/bin/python \
-TLSP_TEST_TILELANG=/path/to/tilelang/repo \
-python -m unittest tests.test_integration -v
+TLSP_TEST_PYTHON=/path/to/venv/bin/python python -m unittest tests.test_integration -v
+# 用源码构建的环境时，再指一下源码树：
+# TLSP_TEST_TILELANG=/path/to/tilelang/repo
 ```
 
 ## 演示

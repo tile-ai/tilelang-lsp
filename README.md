@@ -123,13 +123,14 @@ in-process — so they stay responsive and correct for unparsable intermediate s
 python -m unittest discover tests -v    # unit tests (no tilelang needed)
 ```
 
-Integration tests run against a real tilelang checkout and are gated by env vars
-(they skip cleanly without them):
+Integration tests need a python that can import tilelang — a plain
+`pip install tilelang>=0.1.13` environment is enough (they skip cleanly without
+one):
 
 ```bash
-TLSP_TEST_PYTHON=/path/to/tilelang/venv/bin/python \
-TLSP_TEST_TILELANG=/path/to/tilelang/repo \
-python -m unittest tests.test_integration -v
+TLSP_TEST_PYTHON=/path/to/venv/bin/python python -m unittest tests.test_integration -v
+# using a source checkout instead? also point at it:
+# TLSP_TEST_TILELANG=/path/to/tilelang/repo
 ```
 
 ## Demo
