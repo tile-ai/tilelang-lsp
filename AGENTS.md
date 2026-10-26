@@ -23,8 +23,13 @@ instead of going dark. `tilelang_lsp_extension/` is the VS Code client extension
   - `static_fallback.py` — AST-only analysis used when tilelang is unavailable or breaks early
   - `protocol.py` — wire protocol between server and worker
   - `config.py` — static config extraction from source
+  - `debug.py` — CUDA-GDB launcher (`python -m tlsp.debug`) used by the extension's
+    "Debug CUDA Kernel" command; enables TileLang line directives, `-G`, cache isolation
+    and generated-source dumps. See `docs/cuda-debugging.md`.
 - `tests/` — unittest suite + `fixtures/` (see gotchas below)
 - `tilelang_lsp_extension/` — VS Code extension (TypeScript)
+  - `src/cudaDebug.ts` — pure Nsight launch configuration and generated-source discovery;
+    its Node tests live in `src/node-tests/` and run without VS Code or a GPU.
 
 ## Commands
 
@@ -37,11 +42,16 @@ python -m unittest discover tests -v
 TLSP_TEST_PYTHON=/path/to/venv/bin/python TLSP_TEST_TILELANG=/path/to/tilelang \
   python -m unittest tests.test_integration -v
 
+# Real CUDA-GDB acceptance (Linux + NVIDIA GPU; skipped without TLSP_TEST_CUDA_GDB)
+TLSP_TEST_PYTHON=/path/to/venv/bin/python TLSP_TEST_TILELANG=/path/to/tilelang \
+  TLSP_TEST_CUDA_GDB=/usr/local/cuda/bin/cuda-gdb \
+  /path/to/venv/bin/python -m unittest tests.test_debug_cuda -v
+
 # Lint everything (run before committing; mirrors the tilelang repo's setup)
 pre-commit run --all-files
 
 # VS Code extension (from tilelang_lsp_extension/)
-npm ci && npm run compile && npm run lint
+npm ci && npm run compile && npm run lint && npm run test:cuda-debug
 ```
 
 ## Conventions and gotchas
@@ -51,11 +61,17 @@ npm ci && npm run compile && npm run lint
   ruff is configured in `pyproject.toml` (line-length 140, rules `E,W,F,UP,FA,B,SIM`,
   target py38). Keep modern annotation syntax (`X | None`, `list[str]`) — it is safe
   because of the future import.
-- `tests/fixtures/*.py` are **intentionally broken inputs** (NameError, failing
-  LayoutInference, ...). Never "fix" them. Tests assert exact 1-based hint/diagnostic
-  line numbers, so adding or removing fixture lines means updating the expectations in
-  `tests/test_integration.py`. Their intentional undefined names are tolerated via a
-  ruff per-file-ignore (`"tests/fixtures/**.py" = ["F821"]`) in `pyproject.toml`.
+- Some `tests/fixtures/*.py` are **intentionally broken inputs** (NameError, failing
+  LayoutInference, ...). Never "fix" those failures. Tests assert exact 1-based
+  hint/diagnostic/debug lines, so changing fixture lines means updating
+  `tests/test_integration.py` and possibly `tests/test_debug_cuda.py` (which pins
+  `elementwise_add.py:23` and stepping to `:24`). `elementwise_add.py` and `cuda_debug_driver.py` are valid
+  execution fixtures. Intentional undefined names use the ruff per-file-ignore in
+  `pyproject.toml`.
+- CUDA debugging requires TileLang >= 0.1.15 for Python line mapping. Normal jit/compile
+  calls are covered; grouped autotune, direct JITKernel construction and compile
+  subprocesses are not. GPU acceptance is opt-in through `TLSP_TEST_CUDA_GDB`; never
+  claim the skipped test proves cuda-gdb breakpoints or stepping work.
 - `tilelang_lsp_extension/test.py` is a manual playground with **deliberate syntax
   errors** for probing diagnostics in the editor. It is excluded from pre-commit at the
   top level of `.pre-commit-config.yaml`; do not fix or delete it.

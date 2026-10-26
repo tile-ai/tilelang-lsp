@@ -13,10 +13,52 @@
     "Linters"
   ],
   "activationEvents": [
-    "onLanguage:python"
+    "onLanguage:python",
+    "onCommand:tilelang.debugKernel",
+    "onCommand:tilelang.openGeneratedSource"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "breakpoints": [
+      {
+        "language": "python"
+      }
+    ],
+    "commands": [
+      {
+        "command": "tilelang.debugKernel",
+        "title": "Debug CUDA Kernel",
+        "category": "TileLang",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "tilelang.openGeneratedSource",
+        "title": "Open Generated CUDA Source",
+        "category": "TileLang",
+        "icon": "$(file-code)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "tilelang.debugKernel",
+          "when": "resourceLangId == python",
+          "group": "navigation@10"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "tilelang.debugKernel",
+          "when": "resourceLangId == python",
+          "group": "debug@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "tilelang.openGeneratedSource"
+        }
+      ]
+    },
     "configuration": {
       "title": "TileLang LSP",
       "properties": {
@@ -47,6 +89,42 @@
             "type": "string"
           },
           "description": "Environment variables for the TLSP server process, merged over the inherited environment (the analyzer subprocess inherits them). The default enables TileLang data-race diagnostics; remove that entry to opt out. Custom entries replace the whole default object."
+        },
+        "tilelang.debug.cudaGdbPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to cuda-gdb used by the CUDA debugging command. Leave empty to use the Nsight VS Code extension's default (/usr/local/cuda/bin/cuda-gdb or PATH)."
+        },
+        "tilelang.debug.deviceDebug": {
+          "type": "boolean",
+          "default": true,
+          "description": "Compile device code with -G so cuda-gdb can inspect locals and registers. Disable for faster line-only debugging with -lineinfo."
+        },
+        "tilelang.debug.breakOnLaunch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stop at every kernel launch (cuda-gdb's break_on_launch application). CUDA-GDB stops at framework kernels too; continue until your TileLang kernel is reached, or disable this and rely on Python pending breakpoints."
+        },
+        "tilelang.debug.args": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments forwarded to the Python script being debugged."
+        },
+        "tilelang.debug.extraEnv": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra environment variables for the debuggee (merged over the extension's defaults). PYTHONPATH keeps the tlsp module path and merges user and inherited entries."
+        },
+        "tilelang.debug.debugDir": {
+          "type": "string",
+          "default": "",
+          "description": "Directory for generated debug sources, relative to the workspace folder. Defaults to .tlsp/debug."
         }
       }
     },
@@ -65,7 +143,8 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "test:cuda-debug": "npm run compile && node --test out/node-tests/cudaDebug.test.js"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"

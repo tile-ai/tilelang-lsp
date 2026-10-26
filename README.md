@@ -19,6 +19,10 @@ and precise diagnostics.
 - **Diagnostics** at three precision levels (see below).
 - **Works while your kernel does not compile**: a four-level degradation chain still
   produces as many hints as possible (see "How it works").
+- **CUDA debugging (experimental)**: debug TileLang kernels in VS Code with `cuda-gdb`,
+  with breakpoints and stepping on the Python lines you wrote. Needs Linux + NVIDIA GPU,
+  the CUDA Toolkit and NVIDIA Nsight VS Code Edition; see
+  [docs/cuda-debugging.md](./docs/cuda-debugging.md).
 
 Results are cached in memory (LRU) and on disk under `~/.cache/tilelang_lsp/`
 (override with `TLSP_CACHE_DIR`), keyed by file content hash + target + tilelang version.
@@ -55,6 +59,28 @@ Settings (all under `tilelang.*`, changes restart the server automatically):
 | `tilelang.enableInlayHints` | `true` | Master switch for the server |
 | `tilelang.serverArgs` | `[]` | Extra CLI args appended to `python -m tlsp` (e.g. `["--target", "c"]` to change the default analysis target) |
 | `tilelang.serverEnv` | `{"TILELANG_ENABLE_DATA_RACE_CHECK": "1"}` | Extra environment variables for the server process (the analyzer subprocess inherits them). Default enables data-race diagnostics; remove that entry to opt out. Custom entries replace the whole default object — keep the race-check key if you still want those diagnostics. `PYTHONPATH` is managed by the extension |
+
+### CUDA debugging (experimental)
+
+With [NVIDIA Nsight VS Code Edition](https://marketplace.visualstudio.com/items?itemName=nvidia.nsight-vscode-edition)
+installed, **TileLang: Debug CUDA Kernel** starts the active Python script under `cuda-gdb`
+through `python -m tlsp.debug`. The launcher enables TileLang's `tl.emit_line_directives`
+and `-G` device debugging so device breakpoints and stepping can map to Python source lines.
+It requires Linux + an NVIDIA GPU (local or Remote-SSH/WSL) and TileLang >= 0.1.15.
+
+- Set Python breakpoints on `with T.Kernel(...)` / `T.copy(...)` lines, then run the command.
+- `breakOnLaunch` stops at every kernel launch; continue past framework (PyTorch) kernels,
+  or disable it and rely on Python pending breakpoints.
+- Disable `tilelang.debug.deviceDebug` for faster line-only debugging with `-lineinfo`.
+- **TileLang: Open Generated CUDA Source** finds JIT `.c` and NVCC `.cu` sources under
+  `.tlsp/debug/generated`.
+
+Settings: `tilelang.debug.cudaGdbPath`, `tilelang.debug.deviceDebug`,
+`tilelang.debug.breakOnLaunch`, `tilelang.debug.args`, `tilelang.debug.extraEnv`, and
+`tilelang.debug.debugDir`. CUDA-GDB acceptance has passed on RTX 5090/CUDA 13.0, including
+Python breakpoints, device stepping, thread variables, and numerical correctness. See
+[docs/cuda-debugging.md](./docs/cuda-debugging.md) for VS Code setup, the support matrix,
+and validation evidence.
 
 ### Neovim
 
@@ -122,6 +148,10 @@ in-process — so they stay responsive and correct for unparsable intermediate s
 ```bash
 python -m unittest discover tests -v    # unit tests (no tilelang needed)
 ```
+
+From `tilelang_lsp_extension/`, `npm run test:cuda-debug` runs the Node-based launch-config
+and generated-source tests without VS Code or a GPU. The opt-in CUDA-GDB acceptance command
+is documented in [docs/cuda-debugging.md](./docs/cuda-debugging.md).
 
 Integration tests need a python that can import tilelang — a plain
 `pip install tilelang>=0.1.13` environment is enough (they skip cleanly without

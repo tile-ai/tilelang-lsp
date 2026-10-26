@@ -50,6 +50,31 @@ Settings (under `tilelang.*`; changing any of them restarts the server):
   Custom entries replace the whole default object — keep the race-check key if you
   still want those diagnostics. `PYTHONPATH` is managed by the extension.
 
+## CUDA debugging (experimental)
+
+With [NVIDIA Nsight VS Code Edition](https://marketplace.visualstudio.com/items?itemName=nvidia.nsight-vscode-edition)
+installed, **TileLang: Debug CUDA Kernel** launches the active Python script under `cuda-gdb`
+via `python -m tlsp.debug`. TileLang's line directives and `-G` device debug info allow device
+breakpoints and stepping to map back to Python source lines. Linux with an NVIDIA GPU (local
+or Remote-SSH/WSL) and TileLang >= 0.1.15 are required. The extension contributes Python
+breakpoint support for the editor; Nsight supplies the actual debug adapter.
+
+Settings (also under `tilelang.*`):
+
+- `tilelang.debug.cudaGdbPath` (default `""`): cuda-gdb path; empty uses the Nsight default.
+- `tilelang.debug.deviceDebug` (default `true`): add `-G`; disable for line-only `-lineinfo`.
+- `tilelang.debug.breakOnLaunch` (default `true`): stop at every kernel launch, including
+  framework kernels; disable to rely only on Python pending breakpoints.
+- `tilelang.debug.args` (default `[]`): arguments forwarded to the debugged script.
+- `tilelang.debug.extraEnv` (default `{}`): extra debuggee environment variables; the tlsp
+  module path is preserved when merging `PYTHONPATH`.
+- `tilelang.debug.debugDir` (default `""`): overrides `.tlsp/debug` for generated artifacts.
+
+**TileLang: Open Generated CUDA Source** recursively finds JIT `.c` and NVCC `.cu` files under
+the debug directory. See `docs/cuda-debugging.md` in the repository for the support matrix,
+current validation status, and Linux/GPU acceptance test. Non-GPU configuration tests run with
+`npm run test:cuda-debug`.
+
 ## Working mechanism
 
 The extension is a thin LSP client: it resolves a Python interpreter (configured →

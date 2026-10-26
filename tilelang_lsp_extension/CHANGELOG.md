@@ -6,4 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Add experimental CUDA debugging through Nsight/cuda-gdb, with Python breakpoints,
+  TileLang line mapping, `-G`/`-lineinfo` build injection, generated CUDA source browsing,
+  and opt-in Linux GPU acceptance tests. See docs/cuda-debugging.md.
 - Initial release

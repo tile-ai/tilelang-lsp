@@ -16,6 +16,9 @@
 - **Hover**：在 hint 行上悬停查看完整 layout/fragment 文本。
 - **诊断**：三级精度（见下文）。
 - **kernel 编译不过也能用**：四级降级链尽可能给出 hints（见"工作原理"）。
+- **CUDA 调试（实验性）**：在 VS Code 中用 `cuda-gdb` 调试 TileLang kernel，断点/单步落在
+  你写的 Python 行上。需要 Linux + NVIDIA GPU、CUDA Toolkit 和 NVIDIA Nsight VS Code
+  扩展；详见 [docs/cuda-debugging_zh.md](./docs/cuda-debugging_zh.md)。
 
 结果缓存于内存（LRU）与磁盘 `~/.cache/tilelang_lsp/`（可用 `TLSP_CACHE_DIR` 覆盖），
 key 为文件内容 hash + target + tilelang 版本。
@@ -51,6 +54,26 @@ vsce package   # 生成 tilelang-type-decorator-*.vsix
 | `tilelang.enableInlayHints` | `true` | server 总开关 |
 | `tilelang.serverArgs` | `[]` | 追加到 `python -m tlsp` 的额外 CLI 参数（如 `["--target", "c"]` 可改默认分析 target) |
 | `tilelang.serverEnv` | `{"TILELANG_ENABLE_DATA_RACE_CHECK": "1"}` | 传给 server 进程的环境变量（analyzer 子进程继承）。默认开启数据竞争诊断；删除该键即关闭。注意自定义时整体替换默认对象——仍要 race 诊断需保留该键。`PYTHONPATH` 由扩展托管 |
+
+### CUDA 调试（实验性）
+
+安装 [NVIDIA Nsight VS Code Edition](https://marketplace.visualstudio.com/items?itemName=nvidia.nsight-vscode-edition)
+后，执行 **TileLang: Debug CUDA Kernel** 会通过 `python -m tlsp.debug` 和 `cuda-gdb`
+启动当前 Python 脚本。启动器打开 TileLang 的 `tl.emit_line_directives` 并添加 `-G`，
+使设备断点和单步可以映射回 Python 源行。需要 Linux + NVIDIA GPU（本机或
+Remote-SSH/WSL）以及 TileLang >= 0.1.15。
+
+- 在 `with T.Kernel(...)` / `T.copy(...)` 等 Python 行下断点，然后运行命令。
+- `breakOnLaunch` 会在每次 kernel launch 时停下；先遇到 PyTorch 等框架 kernel 时继续运行，
+  或关闭它后仅依赖 Python pending breakpoint。
+- 关闭 `tilelang.debug.deviceDebug` 可改用 `-lineinfo`，进行更快的仅行号调试。
+- **TileLang: Open Generated CUDA Source** 查找 `.tlsp/debug/generated` 下的 JIT `.c`
+  和 NVCC `.cu` 源码。
+
+设置项：`tilelang.debug.cudaGdbPath`、`deviceDebug`、`breakOnLaunch`、`args`、`extraEnv`、
+`debugDir`。已在 RTX 5090/CUDA 13.0 上通过真实 CUDA-GDB 验收，包括 Python 断点、
+设备单步、线程变量和数值正确性。VS Code 使用方法、支持矩阵和验证证据见
+[docs/cuda-debugging_zh.md](./docs/cuda-debugging_zh.md)。
 
 ### Neovim
 
@@ -117,6 +140,10 @@ python -m tlsp.analyzer --once path/to/kernel.py --target c
 ```bash
 python -m unittest discover tests -v    # 单元测试（无需 tilelang）
 ```
+
+在 `tilelang_lsp_extension/` 中运行 `npm run test:cuda-debug`，无需 VS Code/GPU 即可测试
+launch 配置与生成源码查找。opt-in 的 CUDA-GDB 验收命令见
+[docs/cuda-debugging_zh.md](./docs/cuda-debugging_zh.md)。
 
 集成测试需要一个能 import tilelang 的 python——直接 `pip install tilelang>=0.1.13`
 的环境即可（未设置环境变量时自动 skip）：

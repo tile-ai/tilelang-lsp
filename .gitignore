@@ -5,6 +5,7 @@ node_modules/
 out/
 .vscode-test/
 *.vsix
+.tlsp/
 
 .vscode/
 .idea/

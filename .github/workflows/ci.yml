@@ -118,3 +118,6 @@ jobs:
 
       - name: ESLint
         run: npm run lint
+
+      - name: CUDA debug configuration tests
+        run: npm run test:cuda-debug
